@@ -41,6 +41,7 @@ export function renderQueryTab(panel, tab, initialSql = '') {
         <button class="btn btn-sm" data-act="saveas">另存为</button>
         <button class="btn btn-sm" data-act="export">导出结果</button>
         <button class="btn btn-sm" data-act="history">历史 ▾</button>
+        <button class="btn btn-sm" data-act="results-toggle" title="显示/隐藏查询结果区">结果 ▾</button>
         <button class="btn btn-sm" data-act="clear">清空</button>
         <span class="spacer" style="flex:1"></span>
         <span class="tb-label" data-ref="saved" title="已保存的查询名称"></span>
