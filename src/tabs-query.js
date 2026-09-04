@@ -47,6 +47,7 @@ export function renderQueryTab(panel, tab, initialSql = '') {
         <span class="tb-label" data-ref="elapsed"></span>
       </div>
       <div class="cm-editor-wrap" data-ref="editor"></div>
+      <div class="query-splitter" data-ref="splitter" title="拖动调整编辑器高度 · 双击复位"></div>
       <div class="query-results" data-ref="results"></div>
     </div>`
 
@@ -81,6 +82,51 @@ export function renderQueryTab(panel, tab, initialSql = '') {
   })
   tab.sql = initialSql
   setTimeout(() => view.focus(), 60)
+
+  // ---- 编辑器/结果区分隔条：拖动调高（按百分比记忆）、双击复位、结果区可整体隐藏 ----
+  const editorWrap = R('editor')
+  const splitter = R('splitter')
+  const qpanel = panel.querySelector('.query-panel')
+  const SPLIT_KEY = 'mysql-studio-query-editor-h'
+  const savedPct = parseFloat(localStorage.getItem(SPLIT_KEY))
+  if (savedPct > 5 && savedPct < 95) editorWrap.style.height = savedPct + '%'
+
+  let drag = null
+  splitter.addEventListener('mousedown', (e) => {
+    e.preventDefault()
+    drag = { startY: e.clientY, startH: editorWrap.getBoundingClientRect().height }
+    splitter.classList.add('dragging')
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+  })
+  document.addEventListener('mousemove', (e) => {
+    if (!drag) return
+    // 上限：至少给结果区留 60px
+    const maxH = panel.clientHeight - 40 - 6 - 60
+    const h = Math.min(Math.max(drag.startH + e.clientY - drag.startY, 80), maxH)
+    editorWrap.style.height = h + 'px'
+  })
+  document.addEventListener('mouseup', () => {
+    if (!drag) return
+    drag = null
+    splitter.classList.remove('dragging')
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    // 存百分比：窗口缩放/最大化后比例保持，始终充满
+    const pctNew = (editorWrap.getBoundingClientRect().height / panel.clientHeight) * 100
+    editorWrap.style.height = pctNew.toFixed(2) + '%'
+    localStorage.setItem(SPLIT_KEY, pctNew.toFixed(2))
+  })
+  splitter.addEventListener('dblclick', () => {
+    editorWrap.style.height = '38%'
+    localStorage.removeItem(SPLIT_KEY)
+  })
+
+  A('results-toggle').onclick = () => {
+    const hidden = qpanel.classList.toggle('results-hidden')
+    A('results-toggle').textContent = hidden ? '结果 ▴' : '结果 ▾'
+    if (!hidden) view.requestMeasure()
+  }
 
   // ---- 执行 ----
   async function run() {

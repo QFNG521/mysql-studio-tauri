@@ -269,12 +269,28 @@ input:focus, select:focus, textarea:focus {
   border-bottom: 1px solid var(--border); flex-shrink: 0;
 }
 .query-split { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.cm-editor-wrap { height: 38%; min-height: 120px; border-bottom: 1px solid var(--border); overflow: hidden; position: relative; flex-shrink: 0; }
+.cm-editor-wrap { height: 38%; min-height: 80px; overflow: hidden; position: relative; flex-shrink: 0; }
 .cm-editor { height: 100%; }
 .cm-editor.cm-focused { outline: none; }
 .cm-scroller { font-family: var(--mono) !important; font-size: 13px; line-height: 1.55; }
-.query-results { flex: 1; overflow: auto; background: var(--bg); }
-.result-block { border-bottom: 1px solid var(--border); background: var(--panel); }
+/* 编辑器与结果区之间的可拖拽分隔条 */
+.query-splitter {
+  height: 6px; flex-shrink: 0; cursor: row-resize;
+  background: transparent; border-bottom: 1px solid var(--border);
+  position: relative; z-index: 3;
+}
+.query-splitter:hover, .query-splitter.dragging { background: var(--accent-weak); }
+.query-panel.results-hidden .query-splitter,
+.query-panel.results-hidden .query-results { display: none; }
+.query-panel.results-hidden .cm-editor-wrap { height: auto !important; flex: 1; }
+.query-results { flex: 1 1 0; overflow: auto; background: var(--bg); display: flex; flex-direction: column; }
+.result-block {
+  border-bottom: 1px solid var(--border); background: var(--panel);
+  display: flex; flex-direction: column; flex-shrink: 0;
+}
+/* 最后一个结果块撑满结果区剩余空间（窗口最大化时不留底部空白） */
+.result-block:last-child { flex: 1 0 auto; }
+.result-block:last-child .result-grid-wrap { flex: 1 0 auto; max-height: none; }
 .result-head {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding: 5px 10px; font-size: 11.5px; color: var(--muted);
