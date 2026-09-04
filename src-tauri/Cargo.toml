@@ -1,0 +1,30 @@
+[package]
+name = "mysql-studio-tauri"
+version = "0.1.0"
+description = "轻量 MySQL 客户端 (Tauri 2)"
+authors = ["lvruifeng"]
+edition = "2021"
+
+[lib]
+name = "mysql_studio_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+mysql = { version = "25", default-features = false, features = ["default-rustls"] }
+# 锁 0.23.23：0.23.24 起证书名不匹配错误变为 NotValidForNameContext 变体，
+# 而 mysql 25 的 DangerousVerifier 只匹配旧的 NotValidForName，
+# 导致 with_danger_skip_domain_validation 失效（IP 直连 + SAN 为空的自签证书必失败）
+rustls = "=0.23.23"
+# SSH 隧道（vendored-openssl 免去系统 OpenSSL 依赖）
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
+
+[profile.release]
+opt-level = 2
+lto = true

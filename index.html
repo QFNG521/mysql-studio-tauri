@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>轻库 · MySQL 客户端</title>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="logo">
+        <span class="logo-mark">🗄</span>
+        <span class="logo-text">轻库</span>
+        <span class="logo-sub">MySQL 客户端</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" id="btn-new-conn">
+          <span class="plus">＋</span> 新建连接
+        </button>
+      </div>
+    </header>
+
+    <div id="main">
+      <aside id="sidebar">
+        <div class="side-search">
+          <input id="tree-search" type="text" placeholder="筛选数据库…" spellcheck="false" />
+        </div>
+        <div id="tree" class="tree"></div>
+      </aside>
+
+      <div id="content">
+        <div id="tabbar"></div>
+        <div id="panels"></div>
+        <div id="empty-state" class="empty-state">
+          <div class="empty-icon">🗄</div>
+          <div class="empty-title">还没有打开任何内容</div>
+          <div class="empty-tip">在左侧单击连接展开数据库，再展开「表」或「查询」并点击；或点击「新建连接」开始</div>
+        </div>
+      </div>
+    </div>
+
+    <footer id="statusbar">
+      <span id="status-text">就绪</span>
+    </footer>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+  <div id="ctxmenu-root"></div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>轻库 · UI 验证（mock 数据）</title>
+</head>
+<body>
+  <!--
+    无头 UI 验证页：stub 掉 Tauri 的 invoke，用固定的假数据驱动前端，
+    用于在脱离 Rust 后端的情况下检查树、表列表、查询列表、SQL 高亮的渲染。
+    用法：python3 -m http.server 在仓库根目录起服务，浏览器打开 /tests/harness/index.html
+  -->
+  <script>
+    window.__MOCK__ = {
+      conns: [
+        { id: 'c1', name: '本机测试库', host: '127.0.0.1', port: 3307, user: 'root', password: '', database: 'testdb', timeout_secs: 5 },
+        { id: 'c2', name: '生产环境', host: '10.0.0.9', port: 3306, user: 'app', password: '', database: '', timeout_secs: 5 },
+      ],
+      dbs: [
+        { name: 'information_schema', system: true },
+        { name: 'mysql', system: true },
+        { name: 'performance_schema', system: true },
+        { name: 'sys', system: true },
+        { name: 'testdb', system: false },
+        { name: 'shop', system: false },
+      ],
+      tables: [
+        { name: 'users', rows: 5, engine: 'InnoDB', comment: '用户表', data_length: 16384, table_type: 'BASE TABLE' },
+        { name: 'orders', rows: 3, engine: 'InnoDB', comment: '订单表', data_length: 16384, table_type: 'BASE TABLE' },
+        { name: 'no_pk_table', rows: 12, engine: 'InnoDB', comment: '', data_length: 32768, table_type: 'BASE TABLE' },
+        { name: 'v_user_stat', rows: null, engine: null, comment: '用户统计视图', data_length: 0, table_type: 'VIEW' },
+      ],
+      queries: [
+        { id: 'q1', conn_id: 'c1', db: 'testdb', name: '今日订单', sql: "SELECT o.id, u.name, o.amount\nFROM orders o\nJOIN users u ON u.id = o.user_id\nWHERE o.created >= CURDATE();", created_at: 1756000000, updated_at: 1756100000 },
+        { id: 'q2', conn_id: 'c1', db: 'testdb', name: '未支付订单数', sql: "SELECT COUNT(*) AS cnt FROM orders WHERE status = 'pending';", created_at: 1756000000, updated_at: 1756012345 },
+      ],
+      ddl: "CREATE TABLE `orders` (\n  `id` bigint NOT NULL AUTO_INCREMENT,\n  `user_id` int NOT NULL,\n  `amount` decimal(10,2) DEFAULT NULL,\n  `status` enum('pending','paid','cancelled') DEFAULT 'pending',\n  `created` timestamp NULL DEFAULT CURRENT_TIMESTAMP,\n  PRIMARY KEY (`id`),\n  KEY `idx_user` (`user_id`),\n  CONSTRAINT `fk_orders_user` FOREIGN KEY (`user_id`) REFERENCES `users` (`id`) ON DELETE CASCADE ON UPDATE CASCADE\n) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci",
+    }
+
+    const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+    window.__TAURI_INTERNALS__ = {
+      invoke: async (cmd, args) => {
+        const M = window.__MOCK__
+        await wait(60)
+        switch (cmd) {
+          case 'list_connections': return M.conns
+          case 'list_databases': return M.dbs
+          case 'list_tables': return M.tables
+          case 'connect_db':
+            return { id: args.config.id, name: args.config.name, server_version: '8.0.36', databases: M.dbs }
+          case 'list_saved_queries':
+            return M.queries.filter((q) => q.conn_id === args.connId && q.db === args.db)
+          case 'save_query': {
+            const q = args.query
+            const now = Date.now() / 1000
+            const exist = M.queries.find((x) => x.id === q.id)
+            if (exist) Object.assign(exist, q, { updated_at: now })
+            else M.queries.push({ ...q, id: 'q' + Date.now(), created_at: now, updated_at: now })
+            return exist || q
+          }
+          case 'delete_query':
+            M.queries = M.queries.filter((x) => x.id !== args.id)
+            return undefined
+          case 'get_table_meta':
+            return {
+              columns: [
+                { name: 'id', column_type: 'bigint', data_type: 'bigint', nullable: false, is_pk: true, is_auto_inc: true, default: null, comment: '主键', charset: null, collation: null },
+                { name: 'user_id', column_type: 'int', data_type: 'int', nullable: false, is_pk: false, is_auto_inc: false, default: null, comment: '', charset: null, collation: null },
+              ],
+              indexes: [
+                { name: 'PRIMARY', non_unique: false, seq: 1, column: 'id', index_type: 'BTREE' },
+                { name: 'idx_user', non_unique: true, seq: 1, column: 'user_id', index_type: 'BTREE' },
+              ],
+              foreign_keys: [{ name: 'fk_orders_user', column: 'user_id', ref_db: 'testdb', ref_table: 'users', ref_column: 'id', on_update: 'CASCADE', on_delete: 'CASCADE' }],
+              referenced_by: [],
+              ddl: M.ddl,
+              pk_columns: ['id'],
+              row_count: 3,
+            }
+          default:
+            console.warn('[mock] unhandled command:', cmd, args)
+            return null
+        }
+      },
+    }
+  </script>
+
+  <div id="app">
+    <header id="topbar">
+      <div class="logo">
+        <span class="logo-mark">🗄</span>
+        <span class="logo-text">轻库</span>
+        <span class="logo-sub">MySQL 客户端</span>
+      </div>
+      <div class="topbar-actions">
+        <button class="btn btn-primary" id="btn-new-conn"><span class="plus">＋</span> 新建连接</button>
+      </div>
+    </header>
+    <div id="main">
+      <aside id="sidebar">
+        <div class="side-search">
+          <input id="tree-search" type="text" placeholder="筛选数据库…" spellcheck="false" />
+        </div>
+        <div id="tree" class="tree"></div>
+      </aside>
+      <div id="content">
+        <div id="tabbar"></div>
+        <div id="panels"></div>
+        <div id="empty-state" class="empty-state">
+          <div class="empty-icon">🗄</div>
+          <div class="empty-title">还没有打开任何内容</div>
+          <div class="empty-tip">在左侧单击连接展开数据库，再展开「表」或「查询」并点击</div>
+        </div>
+      </div>
+    </div>
+    <footer id="statusbar"><span id="status-text">就绪</span></footer>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toast-root"></div>
+  <div id="ctxmenu-root"></div>
+
+  <link rel="stylesheet" href="../../dist/assets/app.css" />
+  <script>
+    // 带时间戳加载，避免浏览器缓存旧的打包产物（配合 serve.py 的 no-store 双保险）
+    document.write('<script type="module" src="../../dist/assets/app.js?v=' + Date.now() + '"><\/script>')
+  </script>
+</body>
+</html>

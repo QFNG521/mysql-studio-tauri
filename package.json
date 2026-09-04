@@ -1,0 +1,28 @@
+{
+  "name": "mysql-studio-tauri",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "watch": "node build.mjs --watch",
+    "test": "node tests/filter.test.mjs && node tests/sql-highlight.test.mjs && node tests/design.test.mjs",
+    "tauri": "tauri"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.16.0",
+    "@lezer/highlight": "^1.2.3",
+    "@codemirror/commands": "^6.5.0",
+    "@codemirror/lang-sql": "^6.1.0",
+    "@codemirror/language": "^6.10.0",
+    "@codemirror/search": "^6.5.0",
+    "@codemirror/state": "^6.4.0",
+    "@codemirror/view": "^6.26.0",
+    "@tauri-apps/api": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.0.0"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "esbuild": "^0.21.5"
+  }
+}
