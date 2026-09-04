@@ -1562,6 +1562,168 @@ pub async fn export_csv(
     }).await
 }
 
+// ================= JSON / Excel 导出 =================
+
+/// JSON 导出用值：NULL → null，数值 → number，日期按 SQL 文本，BLOB 超 8KB 只给占位。
+fn json_value(v: &Value) -> serde_json::Value {
+    match v {
+        Value::NULL => serde_json::Value::Null,
+        Value::Int(i) => serde_json::Value::from(*i),
+        Value::UInt(u) => serde_json::Value::from(*u),
+        Value::Float(f) => serde_json::Value::from(*f),
+        Value::Double(d) => serde_json::Value::from(*d),
+        Value::Bytes(b) => {
+            let s = if b.len() > 8192 {
+                format!("(BLOB, {} bytes)", b.len())
+            } else {
+                String::from_utf8_lossy(b).into_owned()
+            };
+            serde_json::Value::from(s)
+        }
+        other => serde_json::Value::from(other.as_sql(true)),
+    }
+}
+
+#[tauri::command]
+pub async fn export_json(
+    state: State<'_, AppState>,
+    session: String,
+    db: String,
+    sql: String,
+    path: String,
+) -> Result<u64, String> {
+    let pool = pool_of(&state, &session)?;
+    run_blocking(move || {
+        let stmts = split_statements(&sql);
+        let stmt = stmts
+            .first()
+            .ok_or_else(|| "没有可执行的语句".to_string())?;
+        let mut conn = get_conn(&pool)?;
+        if !db.trim().is_empty() {
+            conn.query_drop(format!("USE {}", quote_ident(&db)))
+                .map_err(map_err)?;
+        }
+        let mut result = conn.query_iter(stmt).map_err(map_err)?;
+        let cols = result.columns();
+        let ncols = cols.as_ref().len();
+        // 列名去重（JSON 对象键重复会被覆盖）
+        let mut names: Vec<String> = Vec::with_capacity(ncols);
+        for c in cols.as_ref().iter() {
+            let base = c.name_str().to_string();
+            let mut n = base.clone();
+            let mut k = 2;
+            while names.contains(&n) {
+                n = format!("{base}_{k}");
+                k += 1;
+            }
+            names.push(n);
+        }
+        use std::io::Write;
+        let file = std::fs::File::create(&path).map_err(|e| e.to_string())?;
+        let mut w = std::io::BufWriter::new(file);
+        // 流式写 JSON 数组，避免大结果集整体驻留内存
+        w.write_all(b"[").map_err(|e| e.to_string())?;
+        let mut count: u64 = 0;
+        for row in result.by_ref() {
+            let row = row.map_err(map_err)?;
+            if count > 0 {
+                w.write_all(b",").map_err(|e| e.to_string())?;
+            }
+            let mut obj = serde_json::Map::with_capacity(ncols);
+            for i in 0..ncols {
+                let jv = row
+                    .get::<Value, usize>(i)
+                    .map(|v| json_value(&v))
+                    .unwrap_or(serde_json::Value::Null);
+                obj.insert(names[i].clone(), jv);
+            }
+            let line = serde_json::to_string(&obj).map_err(|e| e.to_string())?;
+            w.write_all(line.as_bytes()).map_err(|e| e.to_string())?;
+            count += 1;
+        }
+        w.write_all(b"]").map_err(|e| e.to_string())?;
+        w.flush().map_err(|e| e.to_string())?;
+        Ok(count)
+    }).await
+}
+
+#[tauri::command]
+pub async fn export_xlsx(
+    state: State<'_, AppState>,
+    session: String,
+    db: String,
+    sql: String,
+    path: String,
+) -> Result<u64, String> {
+    let pool = pool_of(&state, &session)?;
+    run_blocking(move || {
+        let stmts = split_statements(&sql);
+        let stmt = stmts
+            .first()
+            .ok_or_else(|| "没有可执行的语句".to_string())?;
+        let mut conn = get_conn(&pool)?;
+        if !db.trim().is_empty() {
+            conn.query_drop(format!("USE {}", quote_ident(&db)))
+                .map_err(map_err)?;
+        }
+        let mut result = conn.query_iter(stmt).map_err(map_err)?;
+        let cols = result.columns();
+        let ncols = cols.as_ref().len();
+        let header: Vec<String> = cols
+            .as_ref()
+            .iter()
+            .map(|c| c.name_str().to_string())
+            .collect();
+
+        let mut wb = rust_xlsxwriter::Workbook::new();
+        let sheet = wb.add_worksheet();
+        let _ = sheet.set_name("查询结果");
+        let header_fmt = rust_xlsxwriter::Format::new()
+            .set_bold()
+            .set_background_color(0xF7F8FA);
+        for (c, name) in header.iter().enumerate() {
+            let _ = sheet.write_string_with_format(0, c as u16, name, &header_fmt);
+        }
+        let _ = sheet.set_freeze_panes(1, 0); // 冻结表头行
+        sheet
+            .set_column_width(0, 14)
+            .ok(); // 给首列一个基本宽度，其余自动
+
+        let mut row_idx: u32 = 1;
+        let mut count: u64 = 0;
+        for row in result.by_ref() {
+            let row = row.map_err(map_err)?;
+            for i in 0..ncols {
+                let col = i as u16;
+                match row.get::<Value, usize>(i) {
+                    None | Some(Value::NULL) => {}
+                    Some(Value::Int(x)) => {
+                        let _ = sheet.write_number(row_idx, col, x as f64);
+                    }
+                    Some(Value::UInt(x)) => {
+                        let _ = sheet.write_number(row_idx, col, x as f64);
+                    }
+                    Some(Value::Float(x)) => {
+                        let _ = sheet.write_number(row_idx, col, x as f64);
+                    }
+                    Some(Value::Double(x)) => {
+                        let _ = sheet.write_number(row_idx, col, x as f64);
+                    }
+                    Some(other) => {
+                        // 字符串/日期/BLOB 占位，复用统一的显示转换
+                        let s = value_to_display(&other).unwrap_or_default();
+                        let _ = sheet.write_string(row_idx, col, s);
+                    }
+                }
+            }
+            row_idx += 1;
+            count += 1;
+        }
+        wb.save(&path).map_err(|e| e.to_string())?;
+        Ok(count)
+    }).await
+}
+
 /// 把 mysql::Value 转成 INSERT 用的 SQL 字面量。
 /// 注意不能用 display 展示值（BLOB 会变成 "(BLOB, N bytes)"），要按原始类型转换。
 fn sql_literal(v: &mysql::Value) -> String {

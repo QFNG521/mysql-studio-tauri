@@ -24,6 +24,8 @@ mysql = { version = "25", default-features = false, features = ["default-rustls"
 rustls = "=0.23.23"
 # SSH 隧道（vendored-openssl 免去系统 OpenSSL 依赖）
 ssh2 = { version = "0.9", features = ["vendored-openssl"] }
+# 查询结果导出 Excel（纯 Rust，无系统依赖）
+rust_xlsxwriter = "0.79"
 
 [profile.release]
 opt-level = 2

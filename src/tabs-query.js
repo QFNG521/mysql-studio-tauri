@@ -259,16 +259,28 @@ export function renderQueryTab(panel, tab, initialSql = '') {
     const first = lastResults.find((r) => !r.error && r.columns.length)
     if (!first) { toast('没有可导出的结果集，请先执行查询'); return }
     const path = await save({
-      title: '导出查询结果为 CSV',
+      title: '导出查询结果',
       defaultPath: 'query-result.csv',
-      filters: [{ name: 'CSV', extensions: ['csv'] }],
+      filters: [
+        { name: 'CSV', extensions: ['csv'] },
+        { name: 'JSON', extensions: ['json'] },
+        { name: 'Excel 工作簿', extensions: ['xlsx'] },
+      ],
     })
     if (!path) return
+    // 按保存时的扩展名选择格式（保存对话框选了哪个类型，扩展名就是哪个）
+    const ext = (path.split('.').pop() || '').toLowerCase()
+    const args = { session: tab.connId, db: currentDb(), sql: first.sql, path }
     try {
-      // 导出完整结果（不受 max_rows 限制）——重新执行第一条 SELECT
-      const stmt = first.sql
-      const n = await api.exportCsv({ session: tab.connId, db: currentDb(), sql: stmt, path })
-      toast(`已导出 ${n} 行到 ${path}`, 'ok')
+      let n, kind
+      if (ext === 'xlsx') {
+        n = await api.exportXlsx(args); kind = 'Excel'
+      } else if (ext === 'json') {
+        n = await api.exportJson(args); kind = 'JSON'
+      } else {
+        n = await api.exportCsv(args); kind = 'CSV'
+      }
+      toast(`已导出 ${n} 行（${kind}）到 ${path}`, 'ok')
     } catch (e) {
       toast(String(e), 'error', 6000)
     }

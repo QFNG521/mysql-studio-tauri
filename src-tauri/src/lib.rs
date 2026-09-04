@@ -35,6 +35,8 @@ pub fn run() {
             db::delete_rows,
             db::execute_sql,
             db::export_csv,
+            db::export_json,
+            db::export_xlsx,
             db::export_inserts,
             db::list_saved_queries,
             db::save_query,
