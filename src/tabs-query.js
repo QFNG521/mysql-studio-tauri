@@ -256,31 +256,38 @@ export function renderQueryTab(panel, tab, initialSql = '') {
   A('run').onclick = run
   A('clear').onclick = () => { view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: '' } }) }
 
-  A('export').onclick = async () => {
+  A('export').onclick = () => {
     const first = lastResults.find((r) => !r.error && r.columns.length)
     if (!first) { toast('没有可导出的结果集，请先执行查询'); return }
+    // 先弹菜单选格式，再进保存对话框（比系统对话框底部的小下拉直观）
+    const rect = A('export').getBoundingClientRect()
+    showContextMenu(rect.left, rect.bottom + 4, [
+      { label: '📊 Excel 工作簿（.xlsx）', action: () => doExport('xlsx') },
+      { label: '🧾 JSON 数据（.json）', action: () => doExport('json') },
+      { label: '📄 CSV（.csv）', action: () => doExport('csv') },
+    ])
+  }
+
+  async function doExport(fmt) {
+    const first = lastResults.find((r) => !r.error && r.columns.length)
+    if (!first) return
+    const filter =
+      fmt === 'xlsx' ? { name: 'Excel 工作簿', extensions: ['xlsx'] } :
+      fmt === 'json' ? { name: 'JSON', extensions: ['json'] } :
+      { name: 'CSV', extensions: ['csv'] }
     const path = await save({
       title: '导出查询结果',
-      defaultPath: 'query-result.csv',
-      filters: [
-        { name: 'CSV', extensions: ['csv'] },
-        { name: 'JSON', extensions: ['json'] },
-        { name: 'Excel 工作簿', extensions: ['xlsx'] },
-      ],
+      defaultPath: `query-result.${fmt}`,
+      filters: [filter],
     })
     if (!path) return
-    // 按保存时的扩展名选择格式（保存对话框选了哪个类型，扩展名就是哪个）
-    const ext = (path.split('.').pop() || '').toLowerCase()
-    const args = { session: tab.connId, db: currentDb(), sql: first.sql, path }
     try {
+      // 导出完整结果（不受 max_rows 限制）——重新执行第一条 SELECT
+      const args = { session: tab.connId, db: currentDb(), sql: first.sql, path }
       let n, kind
-      if (ext === 'xlsx') {
-        n = await api.exportXlsx(args); kind = 'Excel'
-      } else if (ext === 'json') {
-        n = await api.exportJson(args); kind = 'JSON'
-      } else {
-        n = await api.exportCsv(args); kind = 'CSV'
-      }
+      if (fmt === 'xlsx') { n = await api.exportXlsx(args); kind = 'Excel' }
+      else if (fmt === 'json') { n = await api.exportJson(args); kind = 'JSON' }
+      else { n = await api.exportCsv(args); kind = 'CSV' }
       toast(`已导出 ${n} 行（${kind}）到 ${path}`, 'ok')
     } catch (e) {
       toast(String(e), 'error', 6000)

@@ -308,30 +308,34 @@ export function renderDataTab(panel, tab) {
     }
   }
 
-  async function exportData() {
+  A('export').onclick = () => {
+    const rect = A('export').getBoundingClientRect()
+    showContextMenu(rect.left, rect.bottom + 4, [
+      { label: '📊 Excel 工作簿（.xlsx）', action: () => exportData('xlsx') },
+      { label: '🧾 JSON 数据（.json）', action: () => exportData('json') },
+      { label: '📄 CSV（.csv）', action: () => exportData('csv') },
+    ])
+  }
+
+  async function exportData(fmt = 'csv') {
+    const filter =
+      fmt === 'xlsx' ? { name: 'Excel 工作簿', extensions: ['xlsx'] } :
+      fmt === 'json' ? { name: 'JSON', extensions: ['json'] } :
+      { name: 'CSV', extensions: ['csv'] }
     const path = await save({
       title: '导出数据',
-      defaultPath: `${tab.table}.csv`,
-      filters: [
-        { name: 'CSV', extensions: ['csv'] },
-        { name: 'JSON', extensions: ['json'] },
-        { name: 'Excel 工作簿', extensions: ['xlsx'] },
-      ],
+      defaultPath: `${tab.table}.${fmt}`,
+      filters: [filter],
     })
     if (!path) return
     try {
       const sql = `SELECT * FROM \`${tab.db.replace(/`/g, '``')}\`.\`${tab.table.replace(/`/g, '``')}\`` +
         (st.whereSql ? ` WHERE ${st.whereSql}` : '')
       const args = { session: tab.connId, db: tab.db, sql, path }
-      const ext = (path.split('.').pop() || '').toLowerCase()
       let n, kind
-      if (ext === 'xlsx') {
-        n = await api.exportXlsx(args); kind = 'Excel'
-      } else if (ext === 'json') {
-        n = await api.exportJson(args); kind = 'JSON'
-      } else {
-        n = await api.exportCsv(args); kind = 'CSV'
-      }
+      if (fmt === 'xlsx') { n = await api.exportXlsx(args); kind = 'Excel' }
+      else if (fmt === 'json') { n = await api.exportJson(args); kind = 'JSON' }
+      else { n = await api.exportCsv(args); kind = 'CSV' }
       toast(`已导出 ${n} 行（${kind}）到 ${path}`, 'ok')
     } catch (e) {
       toast(String(e), 'error', 6000)
@@ -388,7 +392,7 @@ export function renderDataTab(panel, tab) {
   }
   A('insert').onclick = renderInsertRow
   A('delete').onclick = deleteSelected
-  A('export').onclick = exportData
+  // （导出按钮的 onclick 已在 exportData 定义处绑定：先选格式再保存）
   A('export-sql').onclick = exportInserts
 
   // 首次加载
