@@ -220,7 +220,7 @@ jobs:
 
             > **macOS**：首次打开若提示「无法验证开发者」，右键应用 → 打开。当前为 adhoc 签名，未经 Apple 公证。
             > **Windows**：SmartScreen 可能对未签名的安装包发出警告，选择「仍要运行」。仅提供 NSIS 安装包（WiX 不支持非 ASCII 输出文件名）。
-            > **Linux**：AppImage 需先 `chmod +x 轻库_*.AppImage` 再运行；deb / rpm 要求系统带有 WebKit2GTK 4.1（Ubuntu 23.04+ / Fedora 38+ 等较新发行版）。
+            > **Linux**：AppImage 需先 `chmod +x qingku_*.AppImage` 再运行；deb / rpm 要求系统带有 WebKit2GTK 4.1（Ubuntu 23.04+ / Fedora 38+ 等较新发行版）。
 
             ## 功能
 
