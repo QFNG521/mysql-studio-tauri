@@ -22,12 +22,22 @@ mysql = { version = "25", default-features = false, features = ["default-rustls"
 # 而 mysql 25 的 DangerousVerifier 只匹配旧的 NotValidForName，
 # 导致 with_danger_skip_domain_validation 失效（IP 直连 + SAN 为空的自签证书必失败）
 rustls = "=0.23.23"
-# SSH 隧道（vendored-openssl 免去系统 OpenSSL 依赖）
-ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 # 查询结果导出 Excel（纯 Rust，无系统依赖）
 rust_xlsxwriter = "0.79"
 # 读取外部 SQL 脚本时识别 GBK / UTF-16 编码（Navicat、记事本导出的 .sql 常见）
 encoding_rs = "0.8"
+
+# SSH 隧道：vendored-openssl 只在 Unix 上启用
+# - Unix：静态链接 OpenSSL，免去用户安装系统 OpenSSL
+# - Windows：不启用任何 openssl feature，libssh2 自动改用系统自带的 WinCNG 加密后端。
+#   若在 Windows 上也开 vendored-openssl，会触发 openssl-src 从源码编译 OpenSSL，
+#   而 GitHub Windows runner 在 shell 里解析到的是 Git for Windows 的精简 Perl
+#   （缺 Locale::Maketext::Simple），OpenSSL 的 Configure 直接失败 → 构建中断。
+[target.'cfg(unix)'.dependencies]
+ssh2 = { version = "0.9", features = ["vendored-openssl"] }
+
+[target.'cfg(windows)'.dependencies]
+ssh2 = { version = "0.9" }
 
 [profile.release]
 opt-level = 2

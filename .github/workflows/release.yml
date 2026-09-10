@@ -93,12 +93,20 @@ jobs:
         with:
           workspaces: 'src-tauri -> target'
 
-      # NSIS 打包需要联网下载工具链，失败则回退为只出 MSI
-      - name: 打包（MSI + NSIS）
+      # 拆成「编译 / MSI / NSIS」三步：
+      # 编译失败与打包失败能一眼区分；NSIS 需联网下载工具链，允许失败但保留 MSI。
+      - name: 编译 release
         shell: bash
-        run: |
-          npx --no-install tauri build --bundles msi,nsis \
-            || npx --no-install tauri build --bundles msi
+        run: npx --no-install tauri build --no-bundle
+
+      - name: 打包 MSI
+        shell: bash
+        run: npx --no-install tauri build --bundles msi
+
+      - name: 打包 NSIS（可失败）
+        shell: bash
+        continue-on-error: true
+        run: npx --no-install tauri build --bundles nsis
 
       - uses: actions/upload-artifact@v4
         with:
