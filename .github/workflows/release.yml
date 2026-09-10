@@ -177,14 +177,21 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      # upload-artifact 会保留各产物在 bundle/ 下的子目录结构（dmg/、macos/、deb/…），
-      # 合并下载后 artifacts/ 里是若干目录，直接 sha256sum * 会因目录而报错。
-      # 这里先摊平成 dist/ 再算校验和，Release 也只上传 dist/ 下的文件。
+      # 1) upload-artifact 会保留各产物在 bundle/ 下的子目录结构（dmg/、macos/、deb/…），
+      #    合并下载后 artifacts/ 里是若干目录，直接 sha256sum * 会因目录而报错；
+      # 2) GitHub 会剥掉 Release 附件名里的非 ASCII 字符
+      #    （轻库_0.1.1_aarch64.dmg → _0.1.1_aarch64.dmg），文件名会变得无法辨认。
+      # 因此先摊平到 dist/，再把文件名里的「轻库」统一换成 ASCII 前缀 qingku。
+      # 注意：只改下载文件名，安装后的显示名 / 开始菜单 / 窗口标题仍是「轻库」。
       - name: 整理产物并生成校验和
         run: |
           mkdir -p dist
           find artifacts -type f -exec cp -t dist {} +
           cd dist
+          for f in *; do
+            n="${f//轻库/qingku}"
+            [ "$n" != "$f" ] && mv -- "$f" "$n"
+          done
           sha256sum * > SHA256SUMS.txt
           ls -lh
 
@@ -202,6 +209,12 @@ jobs:
             | macOS | `.dmg` / `.app.zip` | Apple Silicon（M 系列），macOS 12+ |
             | Windows | `.exe`（NSIS） | x64，Windows 10+ |
             | Linux | `.deb` / `.rpm` / `.AppImage` | x64 |
+
+            下载文件名统一以 `qingku_` 开头（GitHub 不允许附件名含中文，安装后显示名仍为「轻库」）：
+
+            - `qingku_${{ needs.meta.outputs.version }}_aarch64.dmg` / `qingku_${{ needs.meta.outputs.version }}_aarch64_app.zip` — macOS
+            - `qingku_${{ needs.meta.outputs.version }}_x64-setup.exe` — Windows
+            - `qingku_${{ needs.meta.outputs.version }}_amd64.deb` / `qingku-${{ needs.meta.outputs.version }}-1.x86_64.rpm` / `qingku_${{ needs.meta.outputs.version }}_amd64.AppImage` — Linux
 
             同一目录下的 `SHA256SUMS.txt` 提供全部文件的校验和。
 

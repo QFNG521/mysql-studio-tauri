@@ -16,6 +16,15 @@
 | Windows | `.exe`（NSIS） | x64，Windows 10+ |
 | Linux | `.deb` / `.rpm` / `.AppImage` | x64，需系统带 WebKit2GTK 4.1（Ubuntu 23.04+ / Fedora 38+ 等较新发行版） |
 
+Release 里的文件名统一以 **`qingku_`** 开头：
+
+- `qingku_<版本>_aarch64.dmg` / `qingku_<版本>_aarch64_app.zip` — macOS
+- `qingku_<版本>_x64-setup.exe` — Windows
+- `qingku_<版本>_amd64.deb` / `qingku-<版本>-1.x86_64.rpm` / `qingku_<版本>_amd64.AppImage` — Linux
+- `SHA256SUMS.txt` — 全部文件的校验和
+
+> 为什么附件名不是「轻库」：GitHub 会**剥掉 Release 附件名里的非 ASCII 字符**（`轻库_0.1.1_aarch64.dmg` 会变成 `_0.1.1_aarch64.dmg`），因此下载文件名用 ASCII 的 `qingku`。安装后的显示名、开始菜单、窗口标题仍然是「轻库」，不受影响。
+
 > Windows 只提供 NSIS 安装包，不出 MSI：WiX 的 `light.exe` 不支持非 ASCII 输出文件名，而产品名是「轻库」，会生成 `轻库_x.y.z_x64_en-US.msi` 导致打包失败。NSIS 完整支持 Unicode，安装界面、开始菜单、安装目录都能正常显示中文。
 >
 > 安装包目前**未做代码签名与公证**：macOS 首次打开需右键 → 打开；Windows 可能被 SmartScreen 提示，选择「仍要运行」；Linux AppImage 需先 `chmod +x`。
@@ -79,6 +88,8 @@ git push origin v0.1.1
 ```
 
 `.github/workflows/release.yml` 会在 macOS / Windows / Linux 三个 runner 上并行构建（跑前端单测 + Rust release 编译 + 打包），产物汇总到一个 Release job 里创建 Release、上传安装包并生成 `SHA256SUMS.txt`。也可以在 Actions 页面手动触发并指定标签。
+
+汇总 job 会先把各 artifact 里的文件摊平到 `dist/`（`upload-artifact` 会保留 `bundle/` 下的 `dmg/`、`macos/`、`deb/` 等子目录，直接 `sha256sum *` 会因目录报错），再把文件名里的「轻库」替换为 ASCII 前缀 `qingku`，最后才上传——原因见上面的下载说明。
 
 各平台打包步骤都拆成「编译 / 打包」两段，构建失败与打包失败能一眼区分；Linux 的 AppImage 需要外部工具，失败时回退为 deb + rpm，保证发版不会因为单一格式失败而中断。
 
