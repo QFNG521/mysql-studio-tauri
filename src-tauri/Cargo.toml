@@ -1,6 +1,6 @@
 [package]
 name = "mysql-studio-tauri"
-version = "0.1.0"
+version = "0.1.1"
 description = "轻量 MySQL 客户端 (Tauri 2)"
 authors = ["lvruifeng"]
 edition = "2021"
@@ -26,6 +26,8 @@ rustls = "=0.23.23"
 ssh2 = { version = "0.9", features = ["vendored-openssl"] }
 # 查询结果导出 Excel（纯 Rust，无系统依赖）
 rust_xlsxwriter = "0.79"
+# 读取外部 SQL 脚本时识别 GBK / UTF-16 编码（Navicat、记事本导出的 .sql 常见）
+encoding_rs = "0.8"
 
 [profile.release]
 opt-level = 2

@@ -10,7 +10,8 @@ import { sql, MySQL } from '@codemirror/lang-sql'
 import { sqlHighlightStyle } from './sql-highlight.js'
 
 const lightTheme = EditorView.theme({
-  '&': { backgroundColor: '#ffffff', color: '#1f2328' },
+  // 常规文本用纯黑，与 Navicat 默认一致（关键字/字符串等由 .sh-* 决定）
+  '&': { backgroundColor: '#ffffff', color: '#000000' },
   '.cm-content': { caretColor: '#2f6feb', padding: '10px 0' },
   '.cm-gutters': { backgroundColor: '#f7f8fa', color: '#9aa0aa', border: 'none' },
   '.cm-activeLine': { backgroundColor: 'rgba(47,111,235,0.05)' },

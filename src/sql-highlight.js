@@ -17,7 +17,8 @@ const TAG_CLASS = [
   { tag: t.operatorKeyword, class: 'sh-kw' },
   { tag: t.operator, class: 'sh-op' },
   { tag: t.string, class: 'sh-str' },
-  { tag: t.special(t.string), class: 'sh-str' },
+  // 反引号包裹的对象名（lezer 里是 special(string)）：Navicat 里属于常规文本，不按字符串着色
+  { tag: t.special(t.string), class: 'sh-quoted' },
   { tag: t.number, class: 'sh-num' },
   { tag: t.bool, class: 'sh-atom' },
   { tag: t.null, class: 'sh-atom' },

@@ -447,18 +447,22 @@ input:focus, select:focus, textarea:focus {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-corner { background: transparent; }
 
-/* ============ SQL 语法高亮（编辑器与静态预览共用） ============ */
-.sh-kw    { color: #cf222e; font-weight: 600; }  /* 关键字 */
-.sh-str   { color: #0a3069; }                    /* 字符串 / 反引号标识符 */
-.sh-num   { color: #0550ae; }                    /* 数字 */
-.sh-atom  { color: #8250df; }                    /* NULL / TRUE / FALSE */
-.sh-cmt   { color: #6e7781; font-style: italic; } /* 注释 */
-.sh-type  { color: #116329; }                    /* 数据类型 */
-.sh-fn    { color: #6639ba; }                    /* 函数 */
-.sh-ident { color: #953800; }                    /* 标识符 / 属性 */
-.sh-op    { color: #cf222e; }                    /* 运算符 */
-.sh-punc  { color: #57606a; }                    /* 标点 */
-.sh-meta  { color: #6e7781; }
+/* ============ SQL 语法高亮（编辑器与静态预览共用） ============
+   配色对齐 Navicat 默认「语法颜色」：
+   常规=黑、关键字=蓝加粗、字符串=红、数字=红、注释=绿斜体、函数=紫。
+   想换配色只改这一段即可，编辑器与列表预览会同时生效。            */
+.sh-kw    { color: #0000ff; font-weight: 700; }  /* 关键字：SELECT / FROM / WHERE … */
+.sh-type  { color: #0000ff; font-weight: 700; }  /* 数据类型：INT / VARCHAR …（Navicat 归为关键字） */
+.sh-atom  { color: #0000ff; font-weight: 700; }  /* NULL / TRUE / FALSE */
+.sh-str   { color: #ff0000; }                    /* 字符串常量：'abc' */
+.sh-num   { color: #ff0000; }                    /* 数字 */
+.sh-cmt   { color: #008000; font-style: italic; } /* 注释：行注释与块注释 */
+.sh-meta  { color: #008000; font-style: italic; } /* 预处理指令等 */
+.sh-fn    { color: #800080; }                    /* 函数：COUNT() / NOW() … */
+.sh-ident { color: #000000; }                    /* 表名 / 列名等对象名 */
+.sh-quoted{ color: #000000; }                    /* 反引号包裹的对象名 */
+.sh-op    { color: #000000; }                    /* 运算符 */
+.sh-punc  { color: #000000; }                    /* 标点：逗号、括号 … */
 
 /* 静态 SQL 预览（保存查询列表等） */
 .sql-preview-box {

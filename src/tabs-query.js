@@ -3,11 +3,17 @@ import { store } from './store.js'
 import { toast, escapeHtml, promptBox, showContextMenu } from './ui.js'
 import { renderReadonlyTable } from './grid.js'
 import { highlightSqlToHtml } from './sql-highlight.js'
-import { save } from '@tauri-apps/plugin-dialog'
+import { formatSql, simplifySql, statementAt } from './sql-format.js'
+import { save, open } from '@tauri-apps/plugin-dialog'
 
-import { EditorView, keymap } from '@codemirror/view'
-import { baseExtensions, createSqlViewer } from './sql-view.js'
+import { createSqlViewer, setDoc } from './sql-view.js'
 import { copyText } from './tree.js'
+import { openTabs } from './main.js'
+
+/** 取文件名（Windows 路径同样适用） */
+function fileName(p) {
+  return String(p || '').replace(/\\/g, '/').split('/').filter(Boolean).pop() || ''
+}
 
 const HIST_KEY = 'mysql-studio-query-history'
 
@@ -39,6 +45,7 @@ export function renderQueryTab(panel, tab, initialSql = '') {
         <span class="tb-sep"></span>
         <button class="btn btn-sm" data-act="save">保存 <span style="opacity:0.7;font-size:10px">⌘S</span></button>
         <button class="btn btn-sm" data-act="saveas">另存为</button>
+        <button class="btn btn-sm" data-act="file" title="打开 / 保存 SQL 文件、在文件管理器中显示">文件 ▾</button>
         <button class="btn btn-sm" data-act="export">导出结果</button>
         <button class="btn btn-sm" data-act="history">历史 ▾</button>
         <button class="btn btn-sm" data-act="results-toggle" title="显示/隐藏查询结果区">结果 ▾</button>
@@ -55,6 +62,8 @@ export function renderQueryTab(panel, tab, initialSql = '') {
   const R = (n) => panel.querySelector(`[data-ref="${n}"]`)
   const A = (n) => panel.querySelector(`[data-act="${n}"]`)
   let lastResults = []
+  // 从 SQL 文件打开的标签页：标题栏 tooltip 显示完整路径
+  if (tab.filePath) tab.btn.title = tab.filePath
 
   // ---- 库选择 ----
   const dbSel = R('db')
@@ -73,16 +82,45 @@ export function renderQueryTab(panel, tab, initialSql = '') {
   const view = createSqlViewer(R('editor'), {
     doc: initialSql,
     schema: schemaTables.schema,
-    onChange: (text) => { tab.sql = text },
+    onChange: (text) => { tab.sql = text; tab.dirty = true; updateTabLabel() },
     extraKeymap: [
       { key: 'Mod-Enter', run: () => { A('run').click(); return true } },
       { key: 'Shift-Enter', run: () => { A('run').click(); return true } },
       // ⌘S 保存为命名查询
       { key: 'Mod-s', run: () => { A('save').click(); return true } },
+      // ⌘O 打开外部 SQL 文件 / ⌘⇧S 保存为 SQL 文件
+      { key: 'Mod-o', run: () => { openSqlFile(); return true } },
+      { key: 'Mod-Shift-s', run: () => { saveSqlFile({ saveAs: false }); return true } },
     ],
   })
   tab.sql = initialSql
+  // 供标签页复用时读写内容（重复打开同一保存查询 / 同一文件时）
+  tab.setSql = (text) => {
+    setDoc(view, text ?? '')
+    tab.sql = text ?? ''
+    tab.dirty = false
+    updateTabLabel()
+  }
+  tab.getSql = () => view.state.doc.toString()
+  // 供批量关闭前判断 / 触发保存
+  tab.isDirty = () => !!tab.dirty && !!view.state.doc.toString().trim()
+  tab.saveNow = () => saveQuery()
   setTimeout(() => view.focus(), 60)
+
+  // 选中内容时按钮提示变为「执行选中」，让「只跑选区」这件事可见
+  const RUN_LABEL = '<span style="opacity:0.7;font-size:10px">⌘⏎</span>'
+  function selectedRange() {
+    const { from, to } = view.state.selection.main
+    return from === to ? null : { from, to }
+  }
+  function refreshRunLabel() {
+    const b = A('run')
+    if (!b) return
+    b.innerHTML = (selectedRange() ? '▶ 执行选中 ' : '▶ 执行 ') + RUN_LABEL
+  }
+  ;['mouseup', 'keyup', 'focus', 'select'].forEach((ev) =>
+    view.dom.addEventListener(ev, () => setTimeout(refreshRunLabel, 0)))
+  refreshRunLabel()
 
   // ---- 编辑器/结果区分隔条：拖动调高（按百分比记忆）、双击复位、结果区可整体隐藏 ----
   const editorWrap = R('editor')
@@ -129,12 +167,15 @@ export function renderQueryTab(panel, tab, initialSql = '') {
     if (!hidden) view.requestMeasure()
   }
 
-  // ---- 执行 ----
+  // ---- 执行（有选区时只执行选区，无选区执行整篇） ----
   async function run() {
-    const sqlText = view.state.doc.toString()
+    const sel = selectedRange()
+    const sqlText = sel ? view.state.doc.sliceString(sel.from, sel.to) : view.state.doc.toString()
     if (!sqlText.trim()) return
     const maxRows = parseInt(R('maxrows').value)
     A('run').disabled = true
+    A('run').innerHTML = '执行中…'
+    const scopeTip = sel ? ' · 仅选中部分' : ''
     R('elapsed').textContent = '执行中…'
     try {
       const results = await api.executeSql({
@@ -147,13 +188,14 @@ export function renderQueryTab(panel, tab, initialSql = '') {
       const hasErr = results.some((r) => r.error)
       R('elapsed').innerHTML = hasErr
         ? `<span style="color:var(--danger)">执行出错</span>`
-        : `完成 · ${results.length} 条语句 · <b>${totalMs}</b> ms`
-      setStatusText(hasErr ? 'SQL 执行出错' : `SQL 执行完成（${results.length} 条）`)
+        : `完成 · ${results.length} 条语句 · <b>${totalMs}</b> ms${scopeTip}`
+      setStatusText(hasErr ? 'SQL 执行出错' : `SQL 执行完成（${results.length} 条）${scopeTip}`)
     } catch (e) {
       toast(String(e), 'error', 5000)
       R('elapsed').textContent = '执行失败'
     } finally {
       A('run').disabled = false
+      refreshRunLabel()
     }
   }
 
@@ -215,14 +257,239 @@ export function renderQueryTab(panel, tab, initialSql = '') {
   }
 
   // ---- 保存查询 ----
+  /** 标签标题：未保存时后面跟一个 *；有关联文件时 tooltip 显示完整路径 */
+  function updateTabLabel() {
+    const base = String(
+      tab.savedQuery?.name || (tab.filePath ? fileName(tab.filePath) : tab.title) || '查询',
+    ).replace(/\s*\*$/, '')
+    tab.title = base
+    tab.btn.querySelector('.tab-label').textContent = base + (tab.dirty ? ' *' : '')
+    tab.btn.title = tab.filePath || [base, tab.db].filter(Boolean).join(' · ')
+  }
+
   function refreshSavedLabel() {
-    R('saved').textContent = tab.savedQuery ? `📌 ${tab.savedQuery.name}` : ''
+    const parts = []
+    if (tab.savedQuery) parts.push(`📌 ${tab.savedQuery.name}`)
+    if (tab.filePath) parts.push(`💾 ${fileName(tab.filePath)}`)
+    R('saved').textContent = parts.join('   ')
+    R('saved').title = tab.filePath ? tab.filePath : ''
   }
   refreshSavedLabel()
+  updateTabLabel()
 
+  // ---- SQL 文件：打开 / 保存 / 在文件管理器中显示 ----
+  const SQL_FILTERS = [
+    { name: 'SQL 脚本', extensions: ['sql'] },
+    { name: '文本文件', extensions: ['txt'] },
+    { name: '所有文件', extensions: ['*'] },
+  ]
+
+  /** 把文件内容载入当前标签页并关联文件路径 */
+  function attachFile(path, text) {
+    setDoc(view, text)
+    tab.sql = text
+    tab.filePath = path
+    const name = fileName(path)
+    if (!tab.savedQuery) {
+      tab.title = name
+      tab.btn.querySelector('.tab-label').textContent = name
+    }
+    tab.btn.title = path
+    tab.dirty = false
+    refreshSavedLabel()
+    updateTabLabel()
+  }
+
+  /** 打开其他软件保存的 .sql 文件（自动识别 UTF-8 / UTF-16 / GBK 编码） */
+  async function openSqlFile() {
+    let picked
+    try {
+      picked = await open({
+        title: '打开 SQL 文件',
+        multiple: false,
+        directory: false,
+        filters: SQL_FILTERS,
+      })
+    } catch (e) {
+      // 不吞异常：对话框打不开时要有提示，否则表现为「点了没反应」
+      toast(`打开文件对话框失败：${e}`, 'error', 6000)
+      return
+    }
+    if (!picked) return
+    const path = Array.isArray(picked) ? picked[0] : picked
+    if (!path) return
+
+    // 该文件已经在别的标签页打开过 → 直接聚焦，不再重复开
+    const exist = openTabs.findQueryByFile(path)
+    if (exist && exist.id !== tab.id) {
+      openTabs.focusTab(exist.id)
+      toast('该 SQL 文件已在其他标签页中打开')
+      return
+    }
+    let text
+    try {
+      text = await api.readSqlFile(path)
+    } catch (e) {
+      toast(String(e), 'error', 5000)
+      return
+    }
+    // 当前页是空白查询 → 就地载入；否则新开一个标签页
+    const cur = view.state.doc.toString()
+    if (!cur.trim() && !tab.savedQuery && !tab.filePath) {
+      attachFile(path, text)
+    } else {
+      openTabs.openQueryFile(tab.connId, currentDb() || tab.db, path, text)
+    }
+    toast(`已打开 ${fileName(path)}`, 'ok')
+  }
+
+  /** 保存为 .sql 文件；saveAs=true 时总是弹框另选位置 */
+  async function saveSqlFile({ saveAs = false } = {}) {
+    const text = view.state.doc.toString()
+    if (!text.trim()) { toast('没有可保存的 SQL', 'error'); return }
+    let path = tab.filePath
+    if (!path || saveAs) {
+      const suggested = `${(tab.savedQuery?.name || tab.title || 'query').replace(/\.sql$/i, '')}.sql`
+      try {
+        path = await save({
+          title: saveAs ? 'SQL 文件另存为' : '保存为 SQL 文件',
+          defaultPath: suggested,
+          filters: [{ name: 'SQL 脚本', extensions: ['sql'] }],
+        })
+      } catch (e) {
+        toast(`打开保存对话框失败：${e}`, 'error', 6000)
+        return
+      }
+      if (!path) return
+    }
+    try {
+      await api.writeSqlFile(path, text)
+    } catch (e) {
+      toast(String(e), 'error', 5000)
+      return
+    }
+    tab.filePath = path
+    tab.btn.title = path
+    if (!tab.savedQuery) tab.title = fileName(path)
+    tab.dirty = false
+    refreshSavedLabel()
+    updateTabLabel()
+    toast(`已保存到 ${path}`, 'ok')
+  }
+
+  /** 在 Finder / 资源管理器中显示当前 SQL 文件 */
+  async function revealSqlFile() {
+    if (!tab.filePath) {
+      toast('当前查询还没有关联 SQL 文件，请先「另存为 SQL 文件」', 'error', 3600)
+      return
+    }
+    try {
+      await api.revealPath(tab.filePath)
+    } catch (e) {
+      toast(String(e), 'error', 4500)
+    }
+  }
+
+  A('file').onclick = (e) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    showContextMenu(rect.left, rect.bottom + 4, [
+      { label: '📂 打开 SQL 文件…  ⌘O', action: () => openSqlFile() },
+      {
+        label: tab.filePath ? `💾 保存 SQL 文件  ⌘⇧S（${fileName(tab.filePath)}）` : '💾 保存为 SQL 文件…  ⌘⇧S',
+        action: () => saveSqlFile({ saveAs: false }),
+      },
+      { label: '📄 SQL 文件另存为…', action: () => saveSqlFile({ saveAs: true }) },
+      {
+        label: tab.filePath ? '📍 在文件管理器中显示' : '📍 在文件管理器中显示（需先保存为文件）',
+        disabled: !tab.filePath,
+        action: () => revealSqlFile(),
+      },
+    ])
+  }
+
+  /** @returns {boolean} 是否保存成功（批量关闭时据此决定要不要关掉这个标签） */
+  // ---- 编辑器右键菜单：运行 / 格式化 / 编辑 ----
+  function selectCurrentStatement() {
+    const pos = view.state.selection.main.head
+    const st = statementAt(view.state.doc.toString(), pos)
+    if (!st) { toast('没有找到可选择的语句', 'error'); return false }
+    view.dispatch({ selection: { anchor: st.start, head: st.end }, scrollIntoView: true })
+    view.focus()
+    return true
+  }
+
+  function clearSelection() {
+    const head = view.state.selection.main.head
+    view.dispatch({ selection: { anchor: head, head } })
+  }
+
+  function replaceRange(from, to, text) {
+    view.dispatch({ changes: { from, to, insert: text } })
+    view.focus()
+  }
+
+  /** 对选区（无选区则整篇）做文本变换：美化 / 简化 */
+  function transformDoc(fn, okMsg) {
+    const sel = selectedRange()
+    const src = sel ? view.state.doc.sliceString(sel.from, sel.to) : view.state.doc.toString()
+    if (!src.trim()) { toast('没有可处理的内容', 'error'); return }
+    const out = fn(src)
+    if (out === src) { toast('内容没有变化', 'ok', 1500); return }
+    if (sel) replaceRange(sel.from, sel.to, out)
+    else replaceRange(0, view.state.doc.length, out)
+    toast(okMsg, 'ok', 1600)
+  }
+
+  async function pasteFromClipboard() {
+    let txt = ''
+    try {
+      txt = await navigator.clipboard.readText()
+    } catch {
+      toast('读取剪贴板失败，请用 ⌘V 粘贴', 'error', 3600)
+      return
+    }
+    if (!txt) return
+    const { from, to } = view.state.selection.main
+    view.dispatch({ changes: { from, to, insert: txt }, selection: { anchor: from + txt.length } })
+    view.focus()
+  }
+
+  view.dom.addEventListener('contextmenu', (e) => {
+    e.preventDefault()
+    const sel = selectedRange()
+    const selText = sel ? view.state.doc.sliceString(sel.from, sel.to) : ''
+    showContextMenu(e.clientX, e.clientY, [
+      { label: '▶ 运行已选择', disabled: !sel, action: () => run() },
+      { label: '▶ 运行当前语句', action: () => { if (selectCurrentStatement()) run() } },
+      { label: '▶ 运行全部', action: () => { clearSelection(); run() } },
+      '-',
+      { label: '选择当前语句', action: () => selectCurrentStatement() },
+      '-',
+      { label: '美化 SQL（格式化）', action: () => transformDoc(formatSql, '已美化') },
+      { label: '简化 SQL（压缩为一行）', action: () => transformDoc(simplifySql, '已简化') },
+      '-',
+      {
+        label: '剪切',
+        disabled: !sel,
+        action: () => { copyText(selText); replaceRange(sel.from, sel.to, '') },
+      },
+      { label: '复制', disabled: !sel, action: () => copyText(selText) },
+      { label: '粘贴', action: pasteFromClipboard },
+      '-',
+      {
+        label: '全选',
+        action: () => {
+          view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } })
+          view.focus()
+        },
+      },
+    ])
+  })
+
+  /** @returns {boolean} 是否保存成功（批量关闭时据此决定要不要关掉这个标签） */
   async function saveQuery({ forceNewName = false } = {}) {
     const sql = view.state.doc.toString()
-    if (!sql.trim()) { toast('没有可保存的 SQL', 'error'); return }
+    if (!sql.trim()) { toast('没有可保存的 SQL', 'error'); return false }
     let q = tab.savedQuery
       ? { ...tab.savedQuery, sql, db: currentDb() }
       : { id: '', conn_id: tab.connId, db: currentDb(), name: '', sql, created_at: 0, updated_at: 0 }
@@ -231,8 +498,8 @@ export function renderQueryTab(panel, tab, initialSql = '') {
       const suggested = q.name || (tab.title && !tab.title.startsWith('查询') ? tab.title : '') ||
         sql.split('\n')[0].slice(0, 40).trim()
       const name = await promptBox(q.name ? '另存为' : '保存查询', suggested)
-      if (name == null) return
-      if (!name.trim()) { toast('名称不能为空', 'error'); return }
+      if (name == null) return false
+      if (!name.trim()) { toast('名称不能为空', 'error'); return false }
       q = { ...q, name: name.trim() }
       // 另存为 = 新记录
       if (forceNewName) q = { ...q, id: '' }
@@ -241,11 +508,14 @@ export function renderQueryTab(panel, tab, initialSql = '') {
       const saved = await api.saveQuery(q)
       tab.savedQuery = saved
       tab.title = saved.name
-      tab.btn.querySelector('.tab-label').textContent = saved.name
+      tab.dirty = false
       refreshSavedLabel()
+      updateTabLabel()
       toast(`已保存「${saved.name}」`, 'ok')
+      return true
     } catch (e) {
       toast(String(e), 'error', 5000)
+      return false
     }
   }
 
@@ -275,11 +545,17 @@ export function renderQueryTab(panel, tab, initialSql = '') {
       fmt === 'xlsx' ? { name: 'Excel 工作簿', extensions: ['xlsx'] } :
       fmt === 'json' ? { name: 'JSON', extensions: ['json'] } :
       { name: 'CSV', extensions: ['csv'] }
-    const path = await save({
-      title: '导出查询结果',
-      defaultPath: `query-result.${fmt}`,
-      filters: [filter],
-    })
+    let path
+    try {
+      path = await save({
+        title: '导出查询结果',
+        defaultPath: `query-result.${fmt}`,
+        filters: [filter],
+      })
+    } catch (e) {
+      toast(`打开保存对话框失败：${e}`, 'error', 6000)
+      return
+    }
     if (!path) return
     try {
       // 导出完整结果（不受 max_rows 限制）——重新执行第一条 SELECT

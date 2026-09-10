@@ -1,4 +1,5 @@
 import { api } from './api.js'
+import { open } from '@tauri-apps/plugin-dialog'
 import { toast, escapeHtml, showContextMenu, confirmBox, promptBox } from './ui.js'
 import { openTabs } from './main.js'
 import { copyText } from './tree.js'
@@ -21,6 +22,7 @@ export function renderQueriesTab(panel, tab) {
     <div class="list-panel">
       <div class="list-toolbar">
         <button class="btn btn-sm btn-primary" data-act="new">＋ 新建查询</button>
+        <button class="btn btn-sm" data-act="import" title="从磁盘上的 .sql 文件导入为保存的查询">📂 导入 SQL 文件</button>
         <span class="tb-sep"></span>
         <button class="btn btn-sm" data-act="refresh">⟳ 刷新</button>
         <span class="tb-sep"></span>
@@ -136,9 +138,53 @@ export function renderQueriesTab(panel, tab) {
     }
   }
 
+  /** 导入外部 .sql 文件：读内容 → 存成一条「保存的查询」 */
+  async function importSqlFile() {
+    let picked
+    try {
+      picked = await open({
+        title: '导入 SQL 文件',
+        multiple: false,
+        directory: false,
+        filters: [
+          { name: 'SQL 脚本', extensions: ['sql'] },
+          { name: '文本文件', extensions: ['txt'] },
+          { name: '所有文件', extensions: ['*'] },
+        ],
+      })
+    } catch (e) {
+      // 不吞异常：文件对话框打不开时必须让用户看到原因（否则表现为「点了没反应」）
+      toast(`打开文件对话框失败：${e}`, 'error', 6000)
+      return
+    }
+    if (!picked) return
+    const path = Array.isArray(picked) ? picked[0] : picked
+    if (!path) return
+    let sql
+    try {
+      sql = await api.readSqlFile(path)
+    } catch (e) {
+      toast(String(e), 'error', 5000)
+      return
+    }
+    if (!sql.trim()) { toast('该文件没有内容', 'error'); return }
+    const base = String(path).replace(/\\/g, '/').split('/').pop().replace(/\.(sql|txt)$/i, '')
+    const name = await promptBox('导入为保存的查询', base)
+    if (name == null) return
+    if (!name.trim()) { toast('名称不能为空', 'error'); return }
+    try {
+      await api.saveQuery({ id: '', conn_id: tab.connId, db: tab.db, name: name.trim(), sql, created_at: 0, updated_at: 0 })
+      toast(`已导入「${name.trim()}」`, 'ok')
+      load()
+    } catch (e) {
+      toast(String(e), 'error', 5000)
+    }
+  }
+
   A('refresh').onclick = load
   R('search').oninput = renderRows
   A('new').onclick = () => openTabs.openQuery(tab.connId, tab.db, '')
+  A('import').onclick = importSqlFile
 
   // 每次切回该页都重新加载（在查询页保存后回来能立刻看到新记录）
   tab.onShow = () => {

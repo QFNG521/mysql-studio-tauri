@@ -22,4 +22,8 @@ export const api = {
   listSavedQueries: (connId, db) => invoke('list_saved_queries', { connId, db }),
   saveQuery: (query) => invoke('save_query', { query }),
   deleteQuery: (id) => invoke('delete_query', { id }),
+  // SQL 脚本文件（打开外部 .sql / 保存为文件 / 在文件管理器中定位）
+  readSqlFile: (path) => invoke('read_sql_file', { path }),
+  writeSqlFile: (path, content) => invoke('write_sql_file', { path, content }),
+  revealPath: (path) => invoke('reveal_in_file_manager', { path }),
 }

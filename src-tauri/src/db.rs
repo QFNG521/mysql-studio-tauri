@@ -1820,6 +1820,88 @@ fn flush_insert_batch<W: std::io::Write>(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// SQL 脚本文件：读取（自动识别 UTF-8 / UTF-16 / GBK）、写入、在文件管理器中显示
+// ---------------------------------------------------------------------------
+
+/// 把文件字节解码为字符串：UTF-8 BOM / UTF-16 BOM / 严格 UTF-8，否则按 GBK 兜底
+/// （Navicat、记事本等 Windows 软件导出的 .sql 常为 GBK 或带 BOM 的 UTF-8）。
+fn decode_sql_bytes(bytes: &[u8]) -> String {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        return String::from_utf8_lossy(&bytes[3..]).into_owned();
+    }
+    if bytes.starts_with(&[0xFF, 0xFE]) {
+        return encoding_rs::UTF_16LE.decode(&bytes[2..]).0.into_owned();
+    }
+    if bytes.starts_with(&[0xFE, 0xFF]) {
+        return encoding_rs::UTF_16BE.decode(&bytes[2..]).0.into_owned();
+    }
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s.to_string(),
+        Err(_) => encoding_rs::GBK.decode(bytes).0.into_owned(),
+    }
+}
+
+/// 统一换行符为 \n，去掉 \r
+fn normalize_newlines(s: String) -> String {
+    if s.contains('\r') { s.replace("\r\n", "\n").replace('\r', "\n") } else { s }
+}
+
+/// 读取一个 SQL 脚本文件（自动识别编码）
+#[tauri::command]
+pub async fn read_sql_file(path: String) -> Result<String, String> {
+    run_blocking(move || {
+        let bytes = std::fs::read(&path).map_err(|e| format!("读取文件失败: {e}"))?;
+        // 超大的文件前端编辑器也扛不住，给个上限提示
+        if bytes.len() > 8 * 1024 * 1024 {
+            return Err("文件超过 8MB，过大无法在编辑器中打开".into());
+        }
+        Ok(normalize_newlines(decode_sql_bytes(&bytes)))
+    })
+    .await
+}
+
+/// 写入 SQL 脚本文件（UTF-8 带 BOM，便于 Windows 上的 Navicat / 记事本直接打开不乱码）
+#[tauri::command]
+pub async fn write_sql_file(path: String, content: String) -> Result<(), String> {
+    run_blocking(move || {
+        let mut bytes: Vec<u8> = vec![0xEF, 0xBB, 0xBF];
+        bytes.extend_from_slice(content.as_bytes());
+        std::fs::write(&path, bytes).map_err(|e| format!("写入文件失败: {e}"))
+    })
+    .await
+}
+
+/// 在系统文件管理器中定位并选中该文件（macOS：Finder；Windows：资源管理器；Linux：xdg-open 所在目录）
+#[tauri::command]
+pub async fn reveal_in_file_manager(path: String) -> Result<(), String> {
+    run_blocking(move || {
+        let p = std::path::PathBuf::from(&path);
+        if !p.exists() {
+            return Err(format!("文件不存在：{path}"));
+        }
+        let res = if cfg!(target_os = "macos") {
+            std::process::Command::new("open").arg("-R").arg(&p).status()
+        } else if cfg!(target_os = "windows") {
+            std::process::Command::new("explorer")
+                .arg(format!("/select,{}", p.display()))
+                .status()
+        } else {
+            // Linux 上没有统一协议，退化为打开所在文件夹
+            let dir = p.parent().filter(|d| !d.as_os_str().is_empty())
+                .map(|d| d.to_path_buf())
+                .unwrap_or_else(|| std::path::PathBuf::from("/"));
+            std::process::Command::new("xdg-open").arg(dir).status()
+        };
+        match res {
+            Ok(s) if s.success() => Ok(()),
+            Ok(_) => Err("无法打开文件管理器".into()),
+            Err(e) => Err(format!("打开文件管理器失败: {e}")),
+        }
+    })
+    .await
+}
+
 /// 导出整表（或带 where_sql 筛选）数据为 SQL INSERT 脚本（每 100 行一条多值 INSERT）。
 #[tauri::command]
 pub async fn export_inserts(

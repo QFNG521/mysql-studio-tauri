@@ -41,6 +41,9 @@ pub fn run() {
             db::list_saved_queries,
             db::save_query,
             db::delete_query,
+            db::read_sql_file,
+            db::write_sql_file,
+            db::reveal_in_file_manager,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

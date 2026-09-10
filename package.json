@@ -1,12 +1,12 @@
 {
   "name": "mysql-studio-tauri",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "scripts": {
     "build": "node build.mjs",
     "watch": "node build.mjs --watch",
-    "test": "node tests/filter.test.mjs && node tests/sql-highlight.test.mjs && node tests/design.test.mjs",
+    "test": "node tests/filter.test.mjs && node tests/sql-highlight.test.mjs && node tests/design.test.mjs && node tests/sql-format.test.mjs && node tests/dom-refs.test.mjs",
     "tauri": "tauri"
   },
   "dependencies": {

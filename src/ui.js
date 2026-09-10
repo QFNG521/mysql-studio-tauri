@@ -55,6 +55,44 @@ export function confirmBox(title, message, opts = {}) {
   })
 }
 
+/**
+ * 三选一确认框：保存 / 不保存 / 取消（关闭一批未保存的标签页时用）
+ * @returns {Promise<'save'|'discard'|'cancel'>}
+ */
+export function confirmSaveBox(opts = {}) {
+  const {
+    title = '有未保存的内容',
+    message = '',
+    saveText = '保存并关闭',
+    dropText = '不保存',
+    cancelText = '取消',
+    width = 480,
+  } = opts
+  return new Promise((resolve) => {
+    const { mask, body, close } = openModal(title, { width })
+    let done = false
+    const finish = (v) => { if (done) return; done = true; close(); resolve(v) }
+    body.innerHTML = `
+      <div class="confirm-msg" style="margin-bottom:12px"></div>
+      <div class="modal-foot">
+        <button class="btn btn-sm" data-act="cancel">${escapeHtml(cancelText)}</button>
+        <button class="btn btn-sm btn-danger" data-act="drop">${escapeHtml(dropText)}</button>
+        <button class="btn btn-sm btn-primary" data-act="save">${escapeHtml(saveText)}</button>
+      </div>`
+    body.querySelector('.confirm-msg').innerHTML = message
+    body.querySelector('[data-act="cancel"]').onclick = () => finish('cancel')
+    body.querySelector('[data-act="drop"]').onclick = () => finish('discard')
+    body.querySelector('[data-act="save"]').onclick = () => finish('save')
+    mask.addEventListener('mousedown', (e) => { if (e.target === mask) finish('cancel') })
+    mask.querySelector('.modal-x').addEventListener('click', () => finish('cancel'))
+    body.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') finish('cancel')
+      if (e.key === 'Enter') finish('save')
+    })
+    body.querySelector('[data-act="save"]').focus()
+  })
+}
+
 /** 模态框骨架，返回 { mask, body, close } */
 export function openModal(title, opts = {}) {
   const root = document.getElementById('modal-root')
