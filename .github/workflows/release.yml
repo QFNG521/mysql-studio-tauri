@@ -177,9 +177,14 @@ jobs:
           path: artifacts
           merge-multiple: true
 
-      - name: 生成校验和
+      # upload-artifact 会保留各产物在 bundle/ 下的子目录结构（dmg/、macos/、deb/…），
+      # 合并下载后 artifacts/ 里是若干目录，直接 sha256sum * 会因目录而报错。
+      # 这里先摊平成 dist/ 再算校验和，Release 也只上传 dist/ 下的文件。
+      - name: 整理产物并生成校验和
         run: |
-          cd artifacts
+          mkdir -p dist
+          find artifacts -type f -exec cp -t dist {} +
+          cd dist
           sha256sum * > SHA256SUMS.txt
           ls -lh
 
@@ -215,6 +220,6 @@ jobs:
             - 深浅色主题
 
             详细特性见 [README](https://github.com/QFNG521/mysql-studio-tauri#readme)。
-          files: artifacts/*
+          files: dist/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
