@@ -8,6 +8,7 @@ import { renderQueryTab } from './tabs-query.js'
 import { renderTablesTab } from './tabs-tables.js'
 import { renderQueriesTab } from './tabs-queries.js'
 import { renderDesignTab } from './tabs-design.js'
+import { renderRedisKeysTab, renderRedisKeyTab } from './tabs-redis.js'
 import { toast, confirmSaveBox, escapeHtml, showContextMenu } from './ui.js'
 
 const tabs = []
@@ -118,10 +119,10 @@ function tabMenuItems(id) {
 function createTab(def) {
   // 同一表的结构页复用
   if (def.kind !== 'query') {
-    // 筛选条件不同视为不同的数据页
+    // 筛选条件不同视为不同的数据页（Redis 键页额外按 key 去重）
     const exist = tabs.find((t) =>
       t.kind === def.kind && t.connId === def.connId && t.db === def.db && t.table === def.table &&
-      (t.whereSql || '') === (def.whereSql || ''),
+      (t.whereSql || '') === (def.whereSql || '') && (t.key || '') === (def.key || ''),
     )
     if (exist) {
       activateTab(exist.id)
@@ -143,6 +144,8 @@ function createTab(def) {
     activateTab(def.id)
   }
   btn.querySelector('.tab-close').onclick = () => closeTab(def.id)
+  // 鼠标中键关闭（浏览器/编辑器里通用的肌肉记忆）
+  btn.onauxclick = (e) => { if (e.button === 1) { e.preventDefault(); closeTab(def.id) } }
   btn.oncontextmenu = (e) => {
     e.preventDefault()
     showContextMenu(e.clientX, e.clientY, tabMenuItems(def.id))
@@ -160,6 +163,8 @@ function createTab(def) {
   else if (def.kind === 'tables') renderTablesTab(el, tab)
   else if (def.kind === 'queries') renderQueriesTab(el, tab)
   else if (def.kind === 'design') renderDesignTab(el, tab)
+  else if (def.kind === 'rediskeys') renderRedisKeysTab(el, tab)
+  else if (def.kind === 'rediskey') renderRedisKeyTab(el, tab)
   return tab
 }
 
@@ -253,6 +258,17 @@ export const openTabs = {
   focusTab(id) { activateTab(id) },
   /** 当前激活的标签页 */
   activeTab() { return tabs.find((t) => t.id === activeTabId) },
+  // ---- Redis ----
+  /** 打开某个 DB 的键浏览页 */
+  openRedisKeys(connId, db) {
+    return createTab({ id: `rediskeys:${connId}/db${db}`, kind: 'rediskeys', title: `db${db} · 键`, icon: '🔍', connId, db })
+  },
+  /** 打开单个键的查看 / 编辑页（同一键复用标签页） */
+  openRedisKey(connId, db, key) {
+    const exist = tabs.find((t) => t.kind === 'rediskey' && t.connId === connId && t.db === db && t.key === key)
+    if (exist) { activateTab(exist.id); return exist }
+    return createTab({ id: `rediskey:${connId}/db${db}/${key}`, kind: 'rediskey', title: key, icon: '🔑', connId, db, key })
+  },
 }
 
 /** 取路径最后一段文件名（兼容 Windows 反斜杠） */
@@ -271,6 +287,15 @@ document.addEventListener('conn-closed', (e) => {
 })
 
 // ---------- 启动 ----------
+/** 新建查询：沿用当前标签页的连接/库，没有就用第一个连接 */
+function newQueryTab() {
+  const cur = tabs.find((t) => t.id === activeTabId)
+  const connId = cur?.connId || [...store.sessions.keys()][0]
+  if (!connId) { toast('请先连接一个数据库', 'error'); return }
+  const db = cur?.db || store.sessions.get(connId)?.databases?.find((d) => !d.system)?.name || ''
+  openTabs.openQuery(connId, db)
+}
+
 document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('btn-new-conn').onclick = () => openConnDialog()
 
@@ -280,14 +305,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   plus.style.padding = '0 10px'
   plus.title = '新建查询'
   plus.innerHTML = '<span style="font-size:15px;color:var(--muted)">＋</span>'
-  plus.onclick = () => {
-    const cur = tabs.find((t) => t.id === activeTabId)
-    const connId = cur?.connId || [...store.sessions.keys()][0]
-    if (!connId) { toast('请先连接一个数据库', 'error'); return }
-    const db = cur?.db || store.sessions.get(connId)?.databases?.find((d) => !d.system)?.name || ''
-    openTabs.openQuery(connId, db)
-  }
+  plus.onclick = newQueryTab
   tabbar().appendChild(plus)
+
+  // 双击标签栏空白处也能新建查询（标签栏本身是滚动容器，不会误触）
+  tabbar().addEventListener('dblclick', (e) => {
+    if (e.target === tabbar() || e.target.closest('.tab') === null) newQueryTab()
+  })
 
   await refreshTree()
   updateEmptyState()

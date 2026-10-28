@@ -18,6 +18,8 @@ tauri-plugin-dialog = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 mysql = { version = "25", default-features = false, features = ["default-rustls"] }
+# Redis 连接（阻塞客户端 + TLS 支持；default-features 关掉 connection-manager 以免引入 tokio 异步栈）
+redis = { version = "0.27", default-features = false, features = ["tls"] }
 # 锁 0.23.23：0.23.24 起证书名不匹配错误变为 NotValidForNameContext 变体，
 # 而 mysql 25 的 DangerousVerifier 只匹配旧的 NotValidForName，
 # 导致 with_danger_skip_domain_validation 失效（IP 直连 + SAN 为空的自签证书必失败）

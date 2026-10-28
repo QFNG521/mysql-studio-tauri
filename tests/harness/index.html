@@ -77,6 +77,22 @@
               pk_columns: ['id'],
               row_count: 3,
             }
+          case 'get_table_ddl':
+            return M.ddl
+          case 'execute_sql': {
+            const sql = String(args.sql || '')
+            const m = sql.match(/SHOW\s+CREATE\s+(?:TABLE|VIEW)\s+`?([\w$]+)`?/i)
+            const cols = m
+              ? [{ name: 'Table' }, { name: 'Create Table' }]
+              : [{ name: 'id' }, { name: 'name' }]
+            const rows = m
+              ? [[m[1], M.ddl]]
+              : [['1', 'alice'], ['2', 'bob']]
+            return [{
+              sql, columns: cols, rows, affected: 0, last_insert_id: 0,
+              truncated: false, elapsed_ms: 4, error: null,
+            }]
+          }
           default:
             console.warn('[mock] unhandled command:', cmd, args)
             return null

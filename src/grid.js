@@ -14,8 +14,11 @@ export function isNumCol(col) {
 }
 
 export function isBlobCol(col) {
-  const t = col.column_type
-  return [251, 252, 253, 254].includes(t) || (col.flags & F.BLOB) !== 0
+  // 仅真正的二进制列（BLOB / BINARY / VARBINARY / GEOMETRY，协议上无字符集、
+  // 带 BINARY 标志）才不可作为文本编辑；varchar / char / text / enum / set / json
+  // 等文本列都应可直接编辑。MySQL 中 TEXT 与 BLOB 共用类型码(252等)，需靠
+  // BINARY 标志区分：TEXT 不带 BINARY 标志，BLOB 带。
+  return (col.flags & F.BINARY) !== 0
 }
 
 /**
@@ -111,11 +114,15 @@ export function renderEditableGrid(container, opts) {
   table.appendChild(thead)
 
   const checkAll = hr.querySelector('#grid-check-all')
+  // 注意：必须限定在本表格的 tbody 内。用 document.querySelectorAll 会把其它
+  // （隐藏的）标签页里的行一起勾上，切回去就变成"莫名其妙全被选中"。
   checkAll.onchange = () => {
-    document.querySelectorAll('tbody tr', table).forEach((tr) => {
+    selected.clear()
+    tbody.querySelectorAll('tr[data-ri]').forEach((tr) => {
       tr.classList.toggle('selected', checkAll.checked)
+      const cb = tr.querySelector('input[type=checkbox]')
+      if (cb) cb.checked = checkAll.checked
       if (checkAll.checked) selected.add(tr.dataset.ri)
-      else selected.delete(tr.dataset.ri)
     })
   }
 
@@ -154,6 +161,9 @@ export function renderEditableGrid(container, opts) {
       td.title = v === null ? 'NULL（双击编辑）' : v
       if (opts.editable) {
         td.ondblclick = () => startEdit(td, ri, ci, v)
+      } else {
+        // 只读（表无主键）时双击以前完全没反应，容易让人以为卡住了
+        td.ondblclick = () => toast('该表没有主键，无法安全定位到行，请用 SQL 修改', 'error', 3200)
       }
       if (opts.onCellContextMenu) {
         td.oncontextmenu = (e) => {

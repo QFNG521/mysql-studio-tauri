@@ -9,3 +9,6 @@ src-tauri/target/
 
 # 测试实例数据
 .mysql-studio-test/
+
+# 工作区助手数据（本地记忆/会话，不入库）
+.workbuddy/

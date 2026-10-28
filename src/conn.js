@@ -4,28 +4,53 @@ import { refreshTree } from './tree.js'
 import { store } from './store.js'
 
 export function openConnDialog(existing = null) {
-  const { body, close } = openModal(existing ? '编辑连接' : '新建连接', { width: 500 })
+  const { body, close } = openModal(existing ? '编辑连接' : '新建连接', { width: 520 })
   const cfg = existing || {
     id: crypto.randomUUID(),
     name: '', host: '127.0.0.1', port: 3306,
     user: 'root', password: '', database: null, timeout_secs: 8,
     ssh_enabled: false, ssh_host: '', ssh_port: 22, ssh_user: '', ssh_password: '', ssh_key_path: null,
     ssl_enabled: false, ssl_ca: null, ssl_cert: null, ssl_key: null,
+    // Redis 专用
+    db_type: 'mysql', redis_username: null, redis_db: null, redis_tls: false,
   }
+  const isRedis = () => body.querySelector('#f-type').value === 'redis'
+
   body.innerHTML = `
     <div class="form-grid">
+      <label>连接类型</label>
+      <select id="f-type">
+        <option value="mysql" ${cfg.db_type !== 'redis' ? 'selected' : ''}>MySQL</option>
+        <option value="redis" ${cfg.db_type === 'redis' ? 'selected' : ''}>Redis</option>
+      </select>
+
       <label>连接名称</label>
       <input type="text" id="f-name" placeholder="例：本地开发库" value="${escAttr(cfg.name)}" />
       <label>主机</label>
       <input type="text" id="f-host" value="${escAttr(cfg.host)}" />
       <label>端口</label>
       <input type="number" id="f-port" value="${cfg.port}" />
-      <label>用户名</label>
-      <input type="text" id="f-user" value="${escAttr(cfg.user)}" />
-      <label>密码</label>
-      <input type="password" id="f-pass" value="${escAttr(cfg.password)}" />
-      <label>默认数据库</label>
-      <input type="text" id="f-db" placeholder="可选，连接后也可切换" value="${escAttr(cfg.database || '')}" />
+
+      <!-- MySQL 专用 -->
+      <label class="mysql-only">用户名</label>
+      <input type="text" class="mysql-only" id="f-user" value="${escAttr(cfg.user)}" />
+      <label class="mysql-only">密码</label>
+      <input type="password" class="mysql-only" id="f-pass" value="${escAttr(cfg.password)}" />
+      <label class="mysql-only">默认数据库</label>
+      <input type="text" class="mysql-only" id="f-db" placeholder="可选，连接后也可切换" value="${escAttr(cfg.database || '')}" />
+
+      <!-- Redis 专用 -->
+      <label class="redis-only">ACL 用户名</label>
+      <input type="text" class="redis-only" id="f-ruser" placeholder="可选（Redis 6+ ACL，留空只用密码）" value="${escAttr(cfg.redis_username || '')}" />
+      <label class="redis-only">密码</label>
+      <input type="password" class="redis-only" id="f-rpass" placeholder="可选" value="${escAttr(cfg.password)}" />
+      <label class="redis-only">默认 DB 索引</label>
+      <input type="number" class="redis-only" id="f-rdb" placeholder="0（连接后可在左侧切换）" value="${cfg.redis_db ?? ''}" />
+      <label class="redis-only">TLS</label>
+      <label class="chk redis-only" style="justify-content:flex-start;display:flex;gap:6px;align-items:center">
+        <input type="checkbox" id="f-rtls" ${cfg.redis_tls ? 'checked' : ''}/> 使用 TLS（rediss://）
+      </label>
+
       <label>超时(秒)</label>
       <input type="number" id="f-timeout" value="${cfg.timeout_secs}" />
       <div class="form-hint">连接配置（含密码）保存在本机应用数据目录，仅本机可读。</div>
@@ -56,7 +81,7 @@ export function openConnDialog(existing = null) {
 
       <div class="ssh-divider">
         <label class="chk" style="justify-content:flex-start;display:flex;gap:6px;align-items:center">
-          <input type="checkbox" id="f-ssl" ${cfg.ssl_enabled ? 'checked' : ''}/> SSL/TLS 加密
+          <input type="checkbox" id="f-ssl" ${cfg.ssl_enabled ? 'checked' : ''}/> SSL/TLS 加密（仅 MySQL）
         </label>
         <span class="form-hint" style="margin:0">云数据库（RDS 等）常要求开启</span>
       </div>
@@ -77,30 +102,55 @@ export function openConnDialog(existing = null) {
     </div>`
 
   const val = (id) => body.querySelector(id).value.trim()
+  const syncTypeUi = () => {
+    const r = isRedis()
+    body.querySelectorAll('.mysql-only').forEach((el) => (el.style.display = r ? 'none' : ''))
+    body.querySelectorAll('.redis-only').forEach((el) => (el.style.display = r ? '' : 'none'))
+  }
+  syncTypeUi()
+  body.querySelector('#f-type').onchange = () => {
+    // 切换类型时给出该类型合理的默认端口
+    if (isRedis() && Number(body.querySelector('#f-port').value) === 3306) {
+      body.querySelector('#f-port').value = 6379
+    } else if (!isRedis() && Number(body.querySelector('#f-port').value) === 6379) {
+      body.querySelector('#f-port').value = 3306
+    }
+    syncTypeUi()
+  }
+
   const readCfg = () => {
+    const r = isRedis()
     const sshOn = body.querySelector('#f-ssh').checked
     const sslOn = body.querySelector('#f-ssl').checked
     const auth = val('#f-ssh-auth')
-    return {
+    const base = {
       id: cfg.id,
       name: val('#f-name') || val('#f-host') || '未命名连接',
       host: val('#f-host') || '127.0.0.1',
-      port: parseInt(val('#f-port')) || 3306,
-      user: val('#f-user') || 'root',
-      password: body.querySelector('#f-pass').value,
-      database: val('#f-db') || null,
+      port: parseInt(val('#f-port')) || (r ? 6379 : 3306),
+      password: r ? body.querySelector('#f-rpass').value : body.querySelector('#f-pass').value,
       timeout_secs: parseInt(val('#f-timeout')) || 8,
+      db_type: r ? 'redis' : 'mysql',
+      // Redis 专用
+      redis_username: r ? (val('#f-ruser') || null) : null,
+      redis_db: r ? (val('#f-rdb') ? parseInt(val('#f-rdb')) : null) : null,
+      redis_tls: r ? body.querySelector('#f-rtls').checked : false,
+      // MySQL 专用
+      user: r ? '' : val('#f-user') || 'root',
+      database: r ? null : (val('#f-db') || null),
+      ssl_enabled: sslOn,
+      ssl_ca: sslOn ? (val('#f-ssl-ca') || null) : null,
+      ssl_cert: sslOn ? (val('#f-ssl-cert') || null) : null,
+      ssl_key: sslOn ? (val('#f-ssl-key') || null) : null,
+      // SSH
       ssh_enabled: sshOn,
       ssh_host: sshOn ? val('#f-ssh-host') : '',
       ssh_port: sshOn ? (parseInt(val('#f-ssh-port')) || 22) : 0,
       ssh_user: sshOn ? val('#f-ssh-user') : '',
       ssh_password: sshOn ? body.querySelector('#f-ssh-pass').value : '',
       ssh_key_path: sshOn && auth === 'key' ? (val('#f-ssh-keypath') || null) : null,
-      ssl_enabled: sslOn,
-      ssl_ca: sslOn ? (val('#f-ssl-ca') || null) : null,
-      ssl_cert: sslOn ? (val('#f-ssl-cert') || null) : null,
-      ssl_key: sslOn ? (val('#f-ssl-key') || null) : null,
     }
+    return base
   }
 
   // SSH 开关与认证方式切换
@@ -126,8 +176,9 @@ export function openConnDialog(existing = null) {
     btn.disabled = true
     btn.textContent = '测试中…'
     try {
-      const version = await api.testConnection(readCfg())
-      toast(`连接成功，服务器版本 ${version}`, 'ok')
+      const c = readCfg()
+      const version = c.db_type === 'redis' ? await api.redisTest(c) : await api.testConnection(c)
+      toast(`连接成功${c.db_type === 'redis' ? `，Redis ${version}` : `，服务器版本 ${version}`}`, 'ok')
     } catch (e) {
       toast(String(e), 'error', 5000)
     } finally {

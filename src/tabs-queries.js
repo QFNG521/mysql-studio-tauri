@@ -90,6 +90,7 @@ export function renderQueriesTab(panel, tab) {
     R('wrap').querySelectorAll('tbody tr[data-id]').forEach((tr) => {
       const q = st.queries.find((x) => x.id === tr.dataset.id)
       if (!q) return
+      tr.title = `${q.name} · 双击打开`
       tr.ondblclick = () => openQuery(q)
       tr.oncontextmenu = (e) => {
         e.preventDefault()
@@ -186,11 +187,9 @@ export function renderQueriesTab(panel, tab) {
   A('new').onclick = () => openTabs.openQuery(tab.connId, tab.db, '')
   A('import').onclick = importSqlFile
 
-  // 每次切回该页都重新加载（在查询页保存后回来能立刻看到新记录）
-  tab.onShow = () => {
-    R('search').value = ''
-    load()
-  }
+  // 每次切回该页都重新加载（在查询页保存后回来能立刻看到新记录）；
+  // 但保留筛选词，避免"切一下回来筛选就没了"
+  tab.onShow = () => load()
 
   load()
 }

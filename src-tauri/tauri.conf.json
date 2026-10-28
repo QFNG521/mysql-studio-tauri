@@ -12,7 +12,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "轻库 · MySQL 客户端",
+        "title": "轻库 · 数据库客户端",
         "width": 1280,
         "height": 820,
         "minWidth": 960,

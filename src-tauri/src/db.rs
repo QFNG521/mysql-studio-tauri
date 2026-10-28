@@ -7,6 +7,7 @@ use std::time::{Duration, Instant};
 
 use mysql::prelude::Queryable;
 use mysql::{Opts, OptsBuilder, Params, Pool, Value};
+use redis::Client as RedisClient;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -14,6 +15,8 @@ use tauri::State;
 
 pub struct AppState {
     pub pools: Arc<Mutex<HashMap<String, Pool>>>,
+    /// Redis 会话：连接 id -> 阻塞客户端（可复用以开连接并 SELECT 到任意 db）
+    pub redis_clients: Arc<Mutex<HashMap<String, RedisClient>>>,
     /// 每个启用 SSH 隧道的会话一条隧道，断开连接时 Drop 关闭
     pub tunnels: Arc<Mutex<HashMap<String, SshTunnel>>>,
     pub data_dir: PathBuf,
@@ -25,6 +28,9 @@ pub struct AppState {
 pub struct ConnConfig {
     pub id: String,
     pub name: String,
+    /// 数据库类型：mysql | redis（缺省视为 mysql，兼容旧配置）
+    #[serde(default)]
+    pub db_type: String,
     pub host: String,
     pub port: u16,
     pub user: String,
@@ -34,6 +40,16 @@ pub struct ConnConfig {
     pub database: Option<String>,
     #[serde(default = "default_timeout")]
     pub timeout_secs: u64,
+    // ---- Redis 专用（db_type == redis 时生效） ----
+    /// ACL 用户名（Redis 6+，可空；空则只用密码）
+    #[serde(default)]
+    pub redis_username: Option<String>,
+    /// 默认 DB 索引（0-15），连接后可在 UI 切换
+    #[serde(default)]
+    pub redis_db: Option<u8>,
+    /// 是否启用 TLS（rediss://）
+    #[serde(default)]
+    pub redis_tls: bool,
     // ---- SSH 隧道（可选） ----
     #[serde(default)]
     pub ssh_enabled: bool,
@@ -192,7 +208,7 @@ fn quote_ident(s: &str) -> String {
     format!("`{}`", s.replace('`', "``"))
 }
 
-async fn run_blocking<F, T>(f: F) -> Result<T, String>
+pub async fn run_blocking<F, T>(f: F) -> Result<T, String>
 where
     F: FnOnce() -> Result<T, String> + Send + 'static,
     T: Send + 'static,
@@ -973,6 +989,12 @@ pub async fn disconnect_db(state: State<'_, AppState>, id: String) -> Result<(),
         .lock()
         .map_err(|e| e.to_string())?
         .remove(&id);
+    // Redis 会话（阻塞客户端）一并清掉
+    state
+        .redis_clients
+        .lock()
+        .map_err(|e| e.to_string())?
+        .remove(&id);
     // 关闭 SSH 隧道（若有）
     state
         .tunnels
@@ -1199,6 +1221,33 @@ pub async fn get_table_meta(
 
 // ================= 数据浏览 / 编辑 =================
 
+/// 只取建表 / 建视图语句（表列表页右侧 DDL 面板用）。
+/// 走 execute_sql 也能拿到，但长 DDL 会被 8KB 的显示截断策略打断，
+/// 这里直接返回完整字符串。
+#[tauri::command]
+pub async fn get_table_ddl(
+    state: State<'_, AppState>,
+    session: String,
+    db: String,
+    table: String,
+) -> Result<String, String> {
+    let pool = pool_of(&state, &session)?;
+    run_blocking(move || {
+        let mut conn = get_conn(&pool)?;
+        let row: Option<(String, String)> = conn
+            .query_first(format!(
+                "SHOW CREATE TABLE {}.{}",
+                quote_ident(&db),
+                quote_ident(&table)
+            ))
+            .map_err(map_err)?;
+        row.map(|(_, ddl)| ddl)
+            .filter(|d| !d.is_empty())
+            .ok_or_else(|| format!("{}.{} 没有可显示的 DDL", db, table))
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn fetch_rows(
     state: State<'_, AppState>,
@@ -1322,6 +1371,69 @@ pub async fn update_cell(
         }
         Ok(affected)
     }).await
+}
+
+/// 按主键批量更新一行中的多个列（原子操作：单条 UPDATE ... LIMIT 1）。
+/// pk_vals 用于 WHERE 定位（始终用修改前的原值）；values 传「发生变化的列」，
+/// 主键/自增列若被修改也会包含在 values 中（用于改变该行标识）。
+#[tauri::command]
+pub async fn update_row(
+    state: State<'_, AppState>,
+    session: String,
+    db: String,
+    table: String,
+    pk_vals: Vec<PkVal>,
+    values: BTreeMap<String, Option<String>>,
+) -> Result<u64, String> {
+    let pool = pool_of(&state, &session)?;
+    run_blocking(move || {
+        let mut conn = get_conn(&pool)?;
+        conn.query_drop(format!("USE {}", quote_ident(&db)))
+            .map_err(map_err)?;
+        if pk_vals.is_empty() {
+            return Err("无主键信息，无法安全更新".into());
+        }
+        if values.is_empty() {
+            return Err("没有要修改的列".into());
+        }
+        let full = format!("{}.{}", quote_ident(&db), quote_ident(&table));
+
+        let mut params: Vec<Value> = Vec::new();
+        let mut sets = Vec::new();
+        for (col, v) in values {
+            match v {
+                Some(s) => {
+                    params.push(Value::Bytes(s.into_bytes()));
+                    sets.push(format!("{} = ?", quote_ident(&col)));
+                }
+                None => sets.push(format!("{} = NULL", quote_ident(&col))),
+            }
+        }
+        let mut wheres = Vec::new();
+        for pk in pk_vals {
+            match pk.value {
+                Some(v) => {
+                    params.push(Value::Bytes(v.into_bytes()));
+                    wheres.push(format!("{} = ?", quote_ident(&pk.column)));
+                }
+                None => wheres.push(format!("{} IS NULL", quote_ident(&pk.column))),
+            }
+        }
+        let sql = format!(
+            "UPDATE {full} SET {} WHERE {} LIMIT 1",
+            sets.join(", "),
+            wheres.join(" AND ")
+        );
+        let affected = conn
+            .exec_iter(sql, Params::Positional(params))
+            .map_err(map_err)?
+            .affected_rows();
+        if affected == 0 {
+            return Err("更新失败：目标行不存在或已被修改".into());
+        }
+        Ok(affected)
+    })
+    .await
 }
 
 #[tauri::command]

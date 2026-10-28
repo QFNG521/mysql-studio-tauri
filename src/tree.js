@@ -24,11 +24,12 @@ export async function connectTo(cfg) {
   }
   setStatus(`正在连接 ${cfg.host}:${cfg.port} …`)
   try {
-    const info = await api.connect(cfg)
+    const isRedis = cfg.db_type === 'redis'
+    const info = isRedis ? await api.redisConnect(cfg) : await api.connect(cfg)
     store.sessions.set(cfg.id, info)
     ensureTreeState(cfg.id).expanded = true
     renderTree()
-    setStatus(`已连接 ${cfg.name} · MySQL ${info.server_version}`)
+    setStatus(isRedis ? `已连接 ${cfg.name} · Redis ${info.version}` : `已连接 ${cfg.name} · MySQL ${info.server_version}`)
     toast(`已连接「${cfg.name}」`, 'ok')
   } catch (e) {
     setStatus('连接失败')
@@ -131,7 +132,11 @@ function renderConnNode(cfg) {
     e.stopPropagation()
     const act = e.target.dataset?.act
     if (act === 'connect') connectTo(cfg)
-    if (act === 'refresh') { loadDbs(cfg.id).then(renderTree); toast('刷新中…') }
+    if (act === 'refresh') {
+      if (cfg.db_type === 'redis') refreshRedis(cfg).then(renderTree)
+      else loadDbs(cfg.id).then(renderTree)
+      toast('刷新中…')
+    }
     if (act === 'disc') {
       store.disconnect(cfg.id)
       renderTree()
@@ -143,17 +148,29 @@ function renderConnNode(cfg) {
     e.preventDefault()
     selectRow(row)
     const firstDb = cfg.database || info?.databases.find((d) => !d.system)?.name || ''
-    showContextMenu(e.clientX, e.clientY, [
-      { label: connected ? '刷新数据库列表' : '连接', action: () => connected ? loadDbs(cfg.id).then(renderTree) : connectTo(cfg) },
-      { label: '编辑连接', action: () => openConnDialog(cfg) },
-      '-',
-      { label: '新建查询', disabled: !connected, action: () => openTabs.openQuery(cfg.id, firstDb) },
-      '-',
-      { label: connected ? '展开全部' : '', disabled: !connected, action: () => { st.expanded = true; renderTree() } },
-      { label: connected ? '折叠全部' : '', disabled: !connected, action: () => { st.expanded = false; renderTree() } },
-      { label: connected ? '断开连接' : '', disabled: !connected, action: () => { store.disconnect(cfg.id); renderTree() } },
-      { label: '删除连接', action: () => deleteConn(cfg) },
-    ].filter((it) => it === '-' || it.label))
+    if (connected && cfg.db_type === 'redis') {
+      showContextMenu(e.clientX, e.clientY, [
+        { label: '刷新数据库列表', action: () => refreshRedis(cfg).then(renderTree) },
+        { label: '编辑连接', action: () => openConnDialog(cfg) },
+        '-',
+        { label: '展开全部', action: () => { st.expanded = true; renderTree() } },
+        { label: '折叠全部', action: () => { st.expanded = false; renderTree() } },
+        { label: '断开连接', action: () => { store.disconnect(cfg.id); renderTree() } },
+        { label: '删除连接', action: () => deleteConn(cfg) },
+      ])
+    } else {
+      showContextMenu(e.clientX, e.clientY, [
+        { label: connected ? '刷新数据库列表' : '连接', action: () => connected ? loadDbs(cfg.id).then(renderTree) : connectTo(cfg) },
+        { label: '编辑连接', action: () => openConnDialog(cfg) },
+        '-',
+        { label: '新建查询', disabled: !connected, action: () => openTabs.openQuery(cfg.id, firstDb) },
+        '-',
+        { label: connected ? '展开全部' : '', disabled: !connected, action: () => { st.expanded = true; renderTree() } },
+        { label: connected ? '折叠全部' : '', disabled: !connected, action: () => { st.expanded = false; renderTree() } },
+        { label: connected ? '断开连接' : '', disabled: !connected, action: () => { store.disconnect(cfg.id); renderTree() } },
+        { label: '删除连接', action: () => deleteConn(cfg) },
+      ].filter((it) => it === '-' || it.label))
+    }
   }
 
   const children = document.createElement('div')
@@ -162,13 +179,100 @@ function renderConnNode(cfg) {
   node.appendChild(children)
 
   if (st.expanded && connected) {
-    const dbs = (info?.databases || []).filter((d) => matches(d.name))
-    for (const db of dbs) children.appendChild(renderDbNode(cfg, db))
-    if (!dbs.length) {
-      children.innerHTML = '<div class="node-row"><span class="node-label" style="color:var(--muted)">（无匹配的数据库）</span></div>'
+    if (cfg.db_type === 'redis') {
+      const dbs = (info?.dbs || []).filter((d) => matches(`db${d.index}`))
+      for (const db of dbs) children.appendChild(renderRedisDbNode(cfg, db))
+      if (!dbs.length) {
+        children.innerHTML = '<div class="node-row"><span class="node-label" style="color:var(--muted)">（无匹配的数据库）</span></div>'
+      }
+    } else {
+      const dbs = (info?.databases || []).filter((d) => matches(d.name))
+      for (const db of dbs) children.appendChild(renderDbNode(cfg, db))
+      if (!dbs.length) {
+        children.innerHTML = '<div class="node-row"><span class="node-label" style="color:var(--muted)">（无匹配的数据库）</span></div>'
+      }
     }
   }
   return node
+}
+
+// ================= Redis 数据库节点 =================
+
+function typeIconFor(rtype) {
+  switch (rtype) {
+    case 'string': return '🔤'
+    case 'list': return '📜'
+    case 'set': return '🎯'
+    case 'zset': return '📊'
+    case 'hash': return '🗂'
+    default: return '❓'
+  }
+}
+
+async function refreshRedis(cfg) {
+  try {
+    const info = await api.redisConnect(cfg)
+    const s = store.sessions.get(cfg.id)
+    if (s) { s.dbs = info.dbs; s.version = info.version }
+  } catch (e) {
+    toast(String(e), 'error')
+  }
+}
+
+function renderRedisDbNode(cfg, db) {
+  const node = document.createElement('div')
+  node.className = 'tree-node'
+  const row = document.createElement('div')
+  row.className = 'node-row'
+  row.innerHTML = `
+    <span class="arrow"></span>
+    <span class="node-icon">🗄</span>
+    <span class="node-label">db${db.index}</span>
+    <span class="node-badge gray">${db.keys} 键</span>
+    <span class="node-actions"><button class="icon-btn" data-act="q" title="按关键词查询键">🔍</button></span>`
+  node.appendChild(row)
+  setArrow(row.querySelector('.arrow'), 'closed')
+
+  // 键很多的库不适合在树里展开：单击/箭头/双击直接打开「关键词查询」页
+  const openSearch = () => openTabs.openRedisKeys(cfg.id, db.index)
+
+  row.onclick = () => { selectRow(row); openSearch() }
+  row.querySelector('.arrow').onclick = (e) => { e.stopPropagation(); selectRow(row); openSearch() }
+  row.ondblclick = (e) => { e.preventDefault(); selectRow(row); openSearch() }
+  row.querySelector('[data-act="q"]').onclick = (e) => { e.stopPropagation(); openSearch() }
+  row.oncontextmenu = (e) => {
+    e.preventDefault()
+    selectRow(row)
+    showContextMenu(e.clientX, e.clientY, [
+      { label: '按关键词查询键', action: openSearch },
+      { label: '新建键', action: () => newRedisKey(cfg.id, db.index) },
+      '-',
+      { label: '复制 DB 名', action: () => copyText(`db${db.index}`) },
+    ])
+  }
+  return node
+}
+
+async function newRedisKey(connId, dbIndex) {
+  const { promptBox } = await import('./ui.js')
+  const key = await promptBox('新建键', '', { placeholder: '键名', okText: '下一步' })
+  if (key == null || !key.trim()) return
+  const type = await promptBox('键类型', 'string', { message: '输入类型：string / list / set / zset / hash', placeholder: 'string', okText: '创建' })
+  if (type == null) return
+  const rtype = (type.trim() || 'string').toLowerCase()
+  if (!['string', 'list', 'set', 'zset', 'hash'].includes(rtype)) {
+    toast(`不支持的类型：${rtype}`, 'error')
+    return
+  }
+  try {
+    await api.redisSet({ id: connId, db: dbIndex, key: key.trim(), rtype, string: rtype === 'string' ? '' : null, list: null, set: null, zset: null, hash: null, ttl: null })
+    const st = ensureTreeState(`${connId}/db${dbIndex}`)
+    st.loaded = false; st.keys = []; st.cursor = '0'; st.done = false
+    openTabs.openRedisKey(connId, dbIndex, key.trim())
+    toast('已创建空键', 'ok')
+  } catch (e) {
+    toast(String(e), 'error')
+  }
 }
 
 function matches(name) {

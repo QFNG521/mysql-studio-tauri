@@ -1,6 +1,6 @@
 import { api } from './api.js'
 import { store } from './store.js'
-import { toast, setStatus, escapeHtml, confirmBox, showContextMenu } from './ui.js'
+import { toast, setStatus, escapeHtml, confirmBox, showContextMenu, openModal } from './ui.js'
 import { renderEditableGrid, isBlobCol, mysqlTypeNice } from './grid.js'
 import { fmtNum } from './tree.js'
 import { openTabs } from './main.js'
@@ -45,9 +45,10 @@ export function renderDataTab(panel, tab) {
     <div class="grid-wrap" data-ref="grid"></div>
     <div class="data-footer">
       <button class="btn btn-sm" data-act="insert">＋ 行</button>
+      <button class="btn btn-sm" data-act="edit-row" title="编辑选中的行（需勾选一行）">✎ 编辑行</button>
       <button class="btn btn-sm" data-act="delete">－ 删除选中</button>
       <span class="tb-sep"></span>
-      <button class="btn btn-sm" data-act="export">导出 CSV</button>
+      <button class="btn btn-sm" data-act="export" title="导出为 Excel / JSON / CSV">导出 ▾</button>
       <button class="btn btn-sm" data-act="export-sql" title="导出为 SQL INSERT 脚本，可直接在其他库执行">导出 SQL</button>
       <span class="tb-sep"></span>
       <label class="chk"><input type="checkbox" data-ref="confirm-edit" checked/> 编辑前确认</label>
@@ -162,6 +163,9 @@ export function renderDataTab(panel, tab) {
     const col = st.columns[ci]
     const colName = col.org_name || col.name
     const items = []
+    if ((st.pkColumns?.length || 0) > 0) {
+      items.push({ label: '✎ 编辑此行', action: () => openEditRowModal(ri) })
+    }
 
     // 本列属于外键 → 跳到父表对应记录
     for (const grp of groupFks(st.meta?.foreign_keys, (f) => f.name)) {
@@ -218,13 +222,18 @@ export function renderDataTab(panel, tab) {
     }
   }
 
-  async function doUpdate(ri, ci, newVal) {
-    const col = st.columns[ci]
+  function pkValsForRow(ri) {
     const row = st.rows[ri]
-    const pkVals = (st.pkColumns || []).map((pkName) => {
+    return (st.pkColumns || []).map((pkName) => {
       const idx = st.columns.findIndex((c) => c.name === pkName || c.org_name === pkName)
       return { column: pkName, value: idx >= 0 ? row[idx] : null }
     })
+  }
+
+  async function doUpdate(ri, ci, newVal) {
+    const col = st.columns[ci]
+    const row = st.rows[ri]
+    const pkVals = pkValsForRow(ri)
     if (!pkVals.length) throw new Error('无法定位主键')
     await api.updateCell({
       session: tab.connId, db: tab.db, table: tab.table,
@@ -233,6 +242,119 @@ export function renderDataTab(panel, tab) {
     // 本地同步
     row[ci] = newVal
     setStatus(`已更新 ${tab.table}.${col.name}`)
+  }
+
+  /**
+   * 整行编辑弹窗：一次性修改一行中的多个字段，主键/自增/二进制列只读。
+   * 只提交真正发生变化的列，空文本 = 空字符串（除非勾选「设为 NULL」）。
+   */
+  async function openEditRowModal(ri) {
+    if (!st.pkColumns?.length) { toast('表无主键，无法安全编辑，请用 SQL 修改', 'error'); return }
+    const row = st.rows[ri]
+    if (!row) return
+    const metaCols = st.meta?.columns || []
+    const { mask, body, close } = openModal(`编辑行 · ${tab.db}.${tab.table}`, { width: 580 })
+
+    const fields = st.columns.map((col, ci) => {
+      const def = metaCols.find((c) => c.name === col.name)
+      const isPk = st.pkColumns.includes(col.name)
+      const isAuto = def?.is_auto_inc
+      const blob = isBlobCol(col)
+      const nullable = def?.nullable ?? true
+      const oldIsNull = row[ci] === null
+      const text = oldIsNull ? '' : String(row[ci])
+      // 仅真正的二进制列只读；主键/自增列也允许编辑（改变行标识）
+      const readonly = blob
+      const typeNice = mysqlTypeNice(col.column_type)
+      const tags =
+        (isPk ? '<span class="er-tag pk">PK</span>' : '') +
+        (isAuto ? '<span class="er-tag">自增</span>' : '') +
+        (blob ? '<span class="er-tag blob">二进制</span>' : '')
+      const control = readonly
+        ? `<div class="er-ro-value">${oldIsNull ? '<i>NULL</i>' : escapeHtml(text)}</div>`
+        : `<textarea class="er-input" rows="2" data-ci="${ci}" spellcheck="false" placeholder="${nullable ? '值（留空 = 空字符串）' : '值'}">${escapeHtml(text)}</textarea>` +
+          (nullable ? `<label class="chk er-null-lbl"><input type="checkbox" class="er-null" data-ci="${ci}" ${oldIsNull ? 'checked' : ''}/> 设为 NULL</label>` : '')
+      return { ci, col, isPk, isAuto, blob, nullable, oldIsNull, text, readonly, typeNice, tags, control }
+    })
+
+    body.innerHTML = `
+      <div class="er-list">
+        ${fields.map((f) => `
+          <div class="er-field ${f.readonly ? 'er-readonly' : ''}">
+            <div class="er-label">
+              <span class="er-name">${escapeHtml(f.col.name)}</span>
+              <span class="er-type">${escapeHtml(f.typeNice)}</span>
+              ${f.tags}
+              ${f.readonly ? '<span class="er-tag ro">只读</span>' : ''}
+            </div>
+            ${f.control}
+          </div>`).join('')}
+      </div>
+      <div class="modal-foot">
+        <span class="er-hint">主键/自增列可修改（将改变该行标识）；二进制(BLOB)列不可在线编辑</span>
+        <span class="spacer"></span>
+        <button class="btn btn-sm" data-act="cancel">取消</button>
+        <button class="btn btn-sm btn-primary" data-act="save">保存修改</button>
+      </div>`
+
+    // NULL 勾选联动：勾选则清空并禁用输入框
+    body.querySelectorAll('input.er-null').forEach((cb) => {
+      cb.onchange = () => {
+        const ta = body.querySelector(`textarea.er-input[data-ci="${cb.dataset.ci}"]`)
+        if (!ta) return
+        ta.disabled = cb.checked
+        if (cb.checked) ta.value = ''
+      }
+    })
+
+    const onCancel = () => close()
+    body.querySelector('[data-act="cancel"]').onclick = onCancel
+    mask.querySelector('.modal-x').onclick = onCancel
+    mask.addEventListener('mousedown', (e) => { if (e.target === mask) onCancel() })
+
+    body.querySelector('[data-act="save"]').onclick = async () => {
+      const values = {}
+      let changed = 0
+      for (const f of fields) {
+        if (f.readonly) continue
+        const ta = body.querySelector(`textarea.er-input[data-ci="${f.ci}"]`)
+        const nullCb = body.querySelector(`input.er-null[data-ci="${f.ci}"]`)
+        const nullChecked = nullCb?.checked ?? false
+        const newVal = ta.value
+        // 只提交真正发生变化的列（基于原始值 f.text / f.oldIsNull 判断）
+        let thisChanged
+        if (nullChecked) {
+          thisChanged = !f.oldIsNull // 勾选 NULL：原非 NULL → 改；原就 NULL → 无变化
+        } else if (f.oldIsNull) {
+          thisChanged = newVal !== '' // 原 NULL 未勾选：填入非空值 → 改
+        } else {
+          thisChanged = newVal !== f.text // 原非 NULL：值不同 → 改
+        }
+        if (thisChanged) {
+          values[f.col.name] = nullChecked ? null : newVal
+          changed++
+        }
+      }
+      if (!changed) { toast('没有改动'); return }
+      try {
+        await api.updateRow({
+          session: tab.connId, db: tab.db, table: tab.table,
+          pkVals: pkValsForRow(ri), values,
+        })
+        for (const f of fields) {
+          if (f.readonly) continue
+          const nullCb = body.querySelector(`input.er-null[data-ci="${f.ci}"]`)
+          const ta = body.querySelector(`textarea.er-input[data-ci="${f.ci}"]`)
+          const nullChecked = nullCb?.checked ?? false
+          st.rows[ri][f.ci] = nullChecked ? null : ta.value
+        }
+        renderGrid()
+        close()
+        toast('已保存修改', 'ok')
+      } catch (e) {
+        toast(String(e), 'error', 5000)
+      }
+    }
   }
 
   async function renderInsertRow() {
@@ -391,6 +513,12 @@ export function renderDataTab(panel, tab) {
     }
   }
   A('insert').onclick = renderInsertRow
+  A('edit-row').onclick = () => {
+    if (!st.pkColumns?.length) { toast('表无主键，无法安全编辑，请用 SQL 修改', 'error'); return }
+    const idxs = st.grid?.getSelectedRowIdxs() || []
+    if (idxs.length !== 1) { toast('请先勾选且只勾选一行进行编辑'); return }
+    openEditRowModal(idxs[0])
+  }
   A('delete').onclick = deleteSelected
   // （导出按钮的 onclick 已在 exportData 定义处绑定：先选格式再保存）
   A('export-sql').onclick = exportInserts

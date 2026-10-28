@@ -60,6 +60,81 @@ export function baseExtensions(o = {}) {
   return exts
 }
 
+/**
+ * 滚动保护：WKWebView（Tauri）在 contenteditable 获得焦点时会「把插入符滚到可见区」，
+ * 于是出现「用滚动条/滚轮滚到别处 → 点一下页面 → 内容跳回光标所在位置」的现象。
+ * 光在 focus / mouseup 上还原一次是不够的：CodeMirror 自己的 measure 也会在之后
+ * 一两帧里写 scrollTop，所以这里在「鼠标按下 + 聚焦」后的一个小窗口内钉住滚动位置，
+ * 并用 rAF + 定时器多次重试，直到窗口结束。
+ */
+function installScrollGuard(view) {
+  const scroller = view.scrollDOM
+  if (!scroller) return
+
+  let top = scroller.scrollTop
+  let left = scroller.scrollLeft
+  let guardUntil = 0 // 该时间点之前发生的滚动一律视为「异常跳动」
+  let pinning = false
+  let timer = 0
+
+  const remember = () => {
+    top = scroller.scrollTop
+    left = scroller.scrollLeft
+  }
+  const restore = () => {
+    if (Math.abs(scroller.scrollTop - top) > 1) scroller.scrollTop = top
+    if (Math.abs(scroller.scrollLeft - left) > 1) scroller.scrollLeft = left
+  }
+  const releaseGuard = () => { guardUntil = 0 }
+
+  function pin() {
+    if (pinning) return
+    pinning = true
+    const step = () => restore()
+    step()
+    requestAnimationFrame(() => {
+      step()
+      requestAnimationFrame(step)
+    })
+    clearTimeout(timer)
+    timer = setTimeout(() => {
+      step()
+      pinning = false
+    }, 140)
+  }
+
+  scroller.addEventListener('scroll', () => {
+    if (pinning) return // 自己还原产生的滚动，忽略
+    if (performance.now() < guardUntil) { pin(); return } // 窗口内的跳动 → 还原
+    remember()
+  }, { passive: true })
+
+  // 鼠标交互才需要保护：键盘操作（方向键/输入）本来就该让视图跟随光标
+  view.dom.addEventListener('mousedown', () => {
+    remember()
+    guardUntil = performance.now() + 220
+  }, true)
+  view.dom.addEventListener('focus', () => {
+    if (performance.now() < guardUntil) pin()
+  }, true)
+  view.dom.addEventListener('mouseup', () => {
+    if (performance.now() < guardUntil) pin()
+  }, true)
+  view.dom.addEventListener('keydown', releaseGuard, true)
+  view.dom.addEventListener('wheel', releaseGuard, { capture: true, passive: true })
+  view.dom.addEventListener('touchstart', releaseGuard, { capture: true, passive: true })
+
+  // 反向的一种情况：编辑器滚到别处后点页面其它位置（编辑器失焦），
+  // WebKit 有时会在失焦时把内容重新按光标对齐 —— 这里同样兜一次。
+  view.dom.addEventListener('blur', () => {
+    const before = scroller.scrollTop
+    requestAnimationFrame(() => {
+      if (performance.now() < guardUntil) return
+      if (Math.abs(scroller.scrollTop - before) > 1) scroller.scrollTop = before
+    })
+  }, true)
+}
+
 /** 创建一个 SQL 编辑器/查看器 */
 export function createSqlViewer(parent, opts = {}) {
   const view = new EditorView({
@@ -69,6 +144,7 @@ export function createSqlViewer(parent, opts = {}) {
       extensions: baseExtensions(opts),
     }),
   })
+  installScrollGuard(view)
   return view
 }
 

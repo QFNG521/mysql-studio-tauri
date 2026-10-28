@@ -1,6 +1,7 @@
 use tauri::Manager;
 
 pub mod db;
+pub mod redis;
 use db::AppState;
 
 pub fn run() {
@@ -14,6 +15,7 @@ pub fn run() {
             std::fs::create_dir_all(&dir).ok();
             app.manage(AppState {
                 pools: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+                redis_clients: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                 tunnels: std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
                 data_dir: dir,
             });
@@ -29,8 +31,10 @@ pub fn run() {
             db::list_databases,
             db::list_tables,
             db::get_table_meta,
+            db::get_table_ddl,
             db::fetch_rows,
             db::update_cell,
+            db::update_row,
             db::insert_row,
             db::delete_rows,
             db::execute_sql,
@@ -44,6 +48,14 @@ pub fn run() {
             db::read_sql_file,
             db::write_sql_file,
             db::reveal_in_file_manager,
+            // ---- Redis ----
+            redis::redis_test,
+            redis::redis_connect,
+            redis::redis_scan,
+            redis::redis_get,
+            redis::redis_set,
+            redis::redis_del,
+            redis::redis_expire,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
