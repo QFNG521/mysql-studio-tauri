@@ -1,6 +1,6 @@
 [package]
 name = "mysql-studio-tauri"
-version = "0.1.1"
+version = "0.1.2"
 description = "轻量 MySQL 客户端 (Tauri 2)"
 authors = ["lvruifeng"]
 edition = "2021"

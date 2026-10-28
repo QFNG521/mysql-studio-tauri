@@ -1,10 +1,10 @@
-# 轻库 · MySQL 客户端 (mysql-studio-tauri)
+# 轻库 · MySQL / Redis 客户端 (mysql-studio-tauri)
 
 [![Release](https://img.shields.io/github/v/release/QFNG521/mysql-studio-tauri?style=flat-square)](https://github.com/QFNG521/mysql-studio-tauri/releases/latest)
 [![Build](https://github.com/QFNG521/mysql-studio-tauri/actions/workflows/release.yml/badge.svg)](https://github.com/QFNG521/mysql-studio-tauri/actions/workflows/release.yml)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat-square)](https://github.com/QFNG521/mysql-studio-tauri/releases)
 
-基于 **Tauri 2 + Rust(mysql crate) + 原生 JS** 的轻量 MySQL 客户端，类似 Navicat 的核心功能子集，支持 **macOS / Windows / Linux** 三平台。
+基于 **Tauri 2 + Rust(mysql / redis crate) + 原生 JS** 的轻量数据库客户端，类似 Navicat 的核心功能子集，支持 **MySQL 与 Redis**，可运行在 **macOS / Windows / Linux** 三平台。
 
 ## 下载
 
@@ -23,7 +23,7 @@ Release 里的文件名统一以 **`qingku_`** 开头：
 - `qingku_<版本>_amd64.deb` / `qingku-<版本>-1.x86_64.rpm` / `qingku_<版本>_amd64.AppImage` — Linux
 - `SHA256SUMS.txt` — 全部文件的校验和
 
-> 为什么附件名不是「轻库」：GitHub 会**剥掉 Release 附件名里的非 ASCII 字符**（`轻库_0.1.1_aarch64.dmg` 会变成 `_0.1.1_aarch64.dmg`），因此下载文件名用 ASCII 的 `qingku`。安装后的显示名、开始菜单、窗口标题仍然是「轻库」，不受影响。
+> 为什么附件名不是「轻库」：GitHub 会**剥掉 Release 附件名里的非 ASCII 字符**（`轻库_0.1.2_aarch64.dmg` 会变成 `_0.1.2_aarch64.dmg`），因此下载文件名用 ASCII 的 `qingku`。安装后的显示名、开始菜单、窗口标题仍然是「轻库」，不受影响。
 
 > Windows 只提供 NSIS 安装包，不出 MSI：WiX 的 `light.exe` 不支持非 ASCII 输出文件名，而产品名是「轻库」，会生成 `轻库_x.y.z_x64_en-US.msi` 导致打包失败。NSIS 完整支持 Unicode，安装界面、开始菜单、安装目录都能正常显示中文。
 >
@@ -45,6 +45,7 @@ Release 里的文件名统一以 **`qingku_`** 开头：
 - **可视化表设计器**：表列表右键「设计表」、结构页「✏ 设计」、库右键/表列表「＋ 新建表」进入。图形化编辑列（名/类型/可空/主键/自增/默认值/注释，支持上下移排序）、索引（唯一/方法）、外键（引用与 ON DELETE/UPDATE 规则）；底部实时生成 SQL 预览，改表按 diff 生成最小 ALTER（ADD/MODIFY/CHANGE/DROP COLUMN、主键迁移、索引与外键增删改），执行前确认框列出删列/删主键等危险操作；主键列自动强制 NOT NULL。建表/改表逻辑为纯函数并有 15 项单测 + 真库执行验证
 - **SQL 高亮**：查询编辑器、结果区 SQL、DDL 子页、保存查询列表共用同一套 CodeMirror SQL 高亮（配色对齐 Navicat 默认方案：关键字/数据类型蓝色加粗、字符串与数字红色、注释绿色斜体、函数紫色；反引号对象名保持黑色；DDL 为只读查看器）
 - **查询结果右键**：复制值 / 复制整行（TSV）/ 复制列名 / 复制整行为 JSON
+- **Redis**：连接类型可选 Redis，按逻辑库浏览；关键词 SCAN 查询（自动按包含匹配、支持「加载更多」连续扫描）、新建 / 删除键、查看与编辑 `string` / `list` / `set` / `zset` / `hash` 各类型的值、设置 TTL 或持久化；搜索历史按「连接@db」持久化，可点击复用或单条删除
 
 ## 开发
 
@@ -83,8 +84,8 @@ UI 交互可用无头浏览器验证：`tests/harness/index.html` 是 stub 掉 T
 打标签推送即可自动出三平台安装包：
 
 ```bash
-git tag -a v0.1.1 -m "版本说明"
-git push origin v0.1.1
+git tag -a v0.1.2 -m "版本说明"
+git push origin v0.1.2
 ```
 
 `.github/workflows/release.yml` 会在 macOS / Windows / Linux 三个 runner 上并行构建（跑前端单测 + Rust release 编译 + 打包），产物汇总到一个 Release job 里创建 Release、上传安装包并生成 `SHA256SUMS.txt`。也可以在 Actions 页面手动触发并指定标签。
